@@ -1,0 +1,19 @@
+{
+  "name": "kheye-now",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:init": "npx tsx scripts/init-db.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "clsx": "^2.1.1",
+    "framer-motion": "^13.0.0",
+    "lucide-react": "^0.575.0",
+    "tailwind-merge": "^3.6.0"
+  }
+}
