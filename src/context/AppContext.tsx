@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react';
-import { FoodItem } from '@/lib/db';
+import { FoodItem, SafeRestaurant } from '@/lib/db';
 
 // ---- Cart Types ----
 export interface CartItem {
@@ -17,6 +17,7 @@ export interface AppUser {
   phone_number: string;
   address?: string;
   gender?: string;
+  avatar_url?: string;
 }
 
 // ---- Toast Type ----
@@ -48,6 +49,8 @@ interface AppContextType {
 
   // Auth
   user: AppUser | null;
+  restaurant: SafeRestaurant | null;
+  role: 'user' | 'restaurant' | null;
   isAuthLoading: boolean;
   refreshUser: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -59,9 +62,17 @@ interface AppContextType {
 
   // Auth Modal
   isAuthModalOpen: boolean;
-  openAuthModal: (onSuccess?: () => void) => void;
+  authModalInitialTab?: 'signin' | 'signup';
+  authModalInitialRole?: 'user' | 'restaurant';
+  openAuthModal: (options?: { onSuccess?: () => void; tab?: 'signin' | 'signup'; role?: 'user' | 'restaurant' }) => void;
   closeAuthModal: () => void;
   handleAuthSuccess: () => void;
+
+  // Profile Modal
+  isProfileModalOpen: boolean;
+  profileModalMode: 'view' | 'edit';
+  openProfileModal: (mode?: 'view' | 'edit') => void;
+  closeProfileModal: () => void;
 
   // Checkout / Place Order Modal
   isCheckoutModalOpen: boolean;
@@ -80,6 +91,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
+  const [restaurant, setRestaurant] = useState<SafeRestaurant | null>(null);
+  const [role, setRole] = useState<'user' | 'restaurant' | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
 
   // Toast State
@@ -88,7 +101,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Auth Modal State
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalInitialTab, setAuthModalInitialTab] = useState<'signin' | 'signup'>('signin');
+  const [authModalInitialRole, setAuthModalInitialRole] = useState<'user' | 'restaurant'>('user');
   const pendingAuthActionRef = useRef<(() => void) | null>(null);
+
+  // Profile Modal State
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileModalMode, setProfileModalMode] = useState<'view' | 'edit'>('view');
 
   // Checkout Modal State
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
@@ -119,14 +138,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 3500);
   }, []);
 
-  // ---- Fetch current user on mount ----
+  // ---- Fetch current user/restaurant on mount ----
   const refreshUser = useCallback(async () => {
     try {
       const res = await fetch('/api/auth/me');
       const json = await res.json();
-      setUser(json.success ? json.user : null);
+      if (json.success) {
+        if (json.role === 'restaurant') {
+          setRestaurant(json.restaurant);
+          setUser(null);
+          setRole('restaurant');
+        } else {
+          setUser(json.user);
+          setRestaurant(null);
+          setRole('user');
+        }
+      } else {
+        setUser(null);
+        setRestaurant(null);
+        setRole(null);
+      }
     } catch {
       setUser(null);
+      setRestaurant(null);
+      setRole(null);
     } finally {
       setIsAuthLoading(false);
     }
@@ -136,7 +171,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshUser();
   }, [refreshUser]);
 
-  // ---- Cart actions (Add to cart now shows message without opening sidebar!) ----
+  // ---- Cart actions ----
   const addToCart = useCallback((item: FoodItem, quantity = 1) => {
     setCartItems((prev) => {
       const existing = prev.find((ci) => ci.food.id === item.id);
@@ -148,7 +183,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return [...prev, { food: item, quantity }];
     });
 
-    // Notify user with message that conveys the product has been added
     const qtyText = quantity > 1 ? `${quantity}x ` : '';
     showToast(`Added ${qtyText}"${item.name}" to your cart!`, 'success');
   }, [showToast]);
@@ -176,16 +210,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     await fetch('/api/auth/signout', { method: 'POST' });
     setUser(null);
+    setRestaurant(null);
+    setRole(null);
     showToast('Signed out successfully', 'info');
   }, [showToast]);
 
   // ---- Auth Modal Actions ----
-  const openAuthModal = useCallback((onSuccess?: () => void) => {
-    if (onSuccess) {
-      pendingAuthActionRef.current = onSuccess;
+  const openAuthModal = useCallback((options?: { onSuccess?: () => void; tab?: 'signin' | 'signup'; role?: 'user' | 'restaurant' }) => {
+    if (options?.onSuccess) {
+      pendingAuthActionRef.current = options.onSuccess;
     } else {
       pendingAuthActionRef.current = null;
     }
+    if (options?.tab) setAuthModalInitialTab(options.tab);
+    if (options?.role) setAuthModalInitialRole(options.role);
     setIsAuthModalOpen(true);
   }, []);
 
@@ -199,11 +237,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (pendingAuthActionRef.current) {
       const callback = pendingAuthActionRef.current;
       pendingAuthActionRef.current = null;
-      // Delay slightly for smooth modal transition
       setTimeout(() => {
         callback();
       }, 150);
     }
+  }, []);
+
+  // ---- Profile Modal Actions ----
+  const openProfileModal = useCallback((mode: 'view' | 'edit' = 'view') => {
+    setProfileModalMode(mode);
+    setIsProfileModalOpen(true);
+  }, []);
+
+  const closeProfileModal = useCallback(() => {
+    setIsProfileModalOpen(false);
   }, []);
 
   // ---- Checkout / Place Order Modal Actions ----
@@ -225,16 +272,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ---- Seamless Place Order Flow ----
   const startPlaceOrderFlow = useCallback((options?: CheckoutOptions) => {
-    // If user is not logged in, pop up the login modal
     if (!user) {
-      openAuthModal(() => {
-        // After user logs in successfully, automatically open checkout modal
-        openCheckoutModal(options);
+      openAuthModal({
+        onSuccess: () => openCheckoutModal(options),
       });
       return;
     }
 
-    // User is logged in, open checkout modal directly
     openCheckoutModal(options);
   }, [user, openAuthModal, openCheckoutModal]);
 
@@ -252,6 +296,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         openCart,
         closeCart,
         user,
+        restaurant,
+        role,
         isAuthLoading,
         refreshUser,
         signOut,
@@ -259,9 +305,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         showToast,
         hideToast,
         isAuthModalOpen,
+        authModalInitialTab,
+        authModalInitialRole,
         openAuthModal,
         closeAuthModal,
         handleAuthSuccess,
+        isProfileModalOpen,
+        profileModalMode,
+        openProfileModal,
+        closeProfileModal,
         isCheckoutModalOpen,
         checkoutItems,
         isDirectOrder,

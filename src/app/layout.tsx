@@ -4,6 +4,7 @@ import { AppProvider } from '@/context/AppContext';
 import CartSidebar from '@/components/CartSidebar';
 import AuthModal from '@/components/AuthModal';
 import CheckoutModal from '@/components/CheckoutModal';
+import ProfileModal from '@/components/ProfileModal';
 import Toast from '@/components/Toast';
 
 export const metadata: Metadata = {
@@ -28,10 +29,10 @@ export default function RootLayout({
           <CartSidebar />
           <AuthModal />
           <CheckoutModal />
+          <ProfileModal />
           <Toast />
         </AppProvider>
       </body>
     </html>
   );
 }
-

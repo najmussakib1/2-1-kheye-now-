@@ -34,15 +34,23 @@ export interface SessionData {
   full_name: string;
   email: string;
   phone_number: string;
+  role: 'user' | 'restaurant';
   exp: number;
 }
 
-export function createSessionToken(user: { id: number; full_name: string; email: string; phone_number: string }): string {
+export function createSessionToken(entity: {
+  id: number;
+  full_name: string;
+  email: string;
+  phone_number: string;
+  role?: 'user' | 'restaurant';
+}): string {
   const payload: SessionData = {
-    id: user.id,
-    full_name: user.full_name,
-    email: user.email,
-    phone_number: user.phone_number,
+    id: entity.id,
+    full_name: entity.full_name,
+    email: entity.email,
+    phone_number: entity.phone_number,
+    role: entity.role || 'user',
     exp: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days expiration
   };
 

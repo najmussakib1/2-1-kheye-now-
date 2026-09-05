@@ -5,7 +5,7 @@ import { hashPassword, createSessionToken, SESSION_COOKIE_NAME } from '@/lib/aut
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { full_name, phone_number, address, gender, email, password } = body;
+    const { full_name, phone_number, address, gender, avatar_url, email, password } = body;
 
     // 1. Input Validation
     if (!full_name || !full_name.trim()) {
@@ -49,15 +49,17 @@ export async function POST(request: Request) {
       email: email.trim(),
       address: address ? address.trim() : '',
       gender: gender || 'Other',
+      avatar_url: avatar_url || '',
       password_hash,
     });
 
     // 6. Generate Session Token
-    const token = createSessionToken(newUser);
+    const token = createSessionToken({ ...newUser, role: 'user' });
 
     // 7. Set HTTP-Only Cookie
     const response = NextResponse.json({
       success: true,
+      role: 'user',
       message: 'Account created successfully!',
       user: newUser,
     });

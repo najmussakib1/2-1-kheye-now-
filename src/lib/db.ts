@@ -3,6 +3,7 @@ import path from 'path';
 
 export interface FoodItem {
   id: number;
+  restaurant_id?: number;
   name: string;
   description: string;
   base_price: number;
@@ -12,6 +13,7 @@ export interface FoodItem {
   rating: number;
   image_url: string;
   created_at?: string;
+  restaurant_name?: string;
 }
 
 export interface User {
@@ -21,11 +23,29 @@ export interface User {
   email: string;
   address?: string;
   gender?: string;
+  avatar_url?: string;
   password_hash: string;
   created_at?: string;
 }
 
 export type SafeUser = Omit<User, 'password_hash'>;
+
+export interface Restaurant {
+  id: number;
+  name: string;
+  owner_name: string;
+  email: string;
+  phone_number: string;
+  address: string;
+  trade_licence_url?: string;
+  categories: string;
+  image_url?: string;
+  rating: number;
+  password_hash: string;
+  created_at?: string;
+}
+
+export type SafeRestaurant = Omit<Restaurant, 'password_hash'>;
 
 export interface OrderItemInput {
   food_id?: number;
@@ -68,6 +88,43 @@ export function getDb() {
   
   // Ensure tables exist
   db.exec(`
+    CREATE TABLE IF NOT EXISTS restaurants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name VARCHAR(255) NOT NULL,
+        owner_name VARCHAR(255) NOT NULL,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        phone_number VARCHAR(50) UNIQUE NOT NULL,
+        address TEXT NOT NULL,
+        trade_licence_url TEXT,
+        categories TEXT DEFAULT 'Fast Food, Juice',
+        image_url TEXT,
+        rating DECIMAL(3, 2) DEFAULT 4.8,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_restaurants_name ON restaurants(name);
+    CREATE INDEX IF NOT EXISTS idx_restaurants_email ON restaurants(email);
+    CREATE INDEX IF NOT EXISTS idx_restaurants_phone ON restaurants(phone_number);
+    CREATE INDEX IF NOT EXISTS idx_restaurants_rating ON restaurants(rating);
+
+    CREATE TABLE IF NOT EXISTS food_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        restaurant_id INTEGER DEFAULT 1,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        base_price DECIMAL(10, 2) NOT NULL,
+        sale_price DECIMAL(10, 2) NOT NULL,
+        is_available BOOLEAN DEFAULT 1,
+        category VARCHAR(100) DEFAULT 'General',
+        rating DECIMAL(3, 2) DEFAULT 4.8,
+        image_url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_food_items_restaurant_id ON food_items(restaurant_id);
+    CREATE INDEX IF NOT EXISTS idx_food_items_category ON food_items(category);
+    CREATE INDEX IF NOT EXISTS idx_food_items_is_available ON food_items(is_available);
+
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         full_name VARCHAR(255) NOT NULL,
@@ -75,6 +132,7 @@ export function getDb() {
         email VARCHAR(255) UNIQUE NOT NULL,
         address TEXT,
         gender VARCHAR(20),
+        avatar_url TEXT,
         password_hash TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -113,25 +171,30 @@ export function getDb() {
 }
 
 // SQL Query method to get all food items or filter by category
-export function getFoodItemsFromDb(category?: string): FoodItem[] {
+export function getFoodItemsFromDb(category?: string, restaurantId?: number): FoodItem[] {
   const db = getDb();
   try {
+    let query = `
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.created_at, r.name as restaurant_name 
+      FROM food_items f
+      LEFT JOIN restaurants r ON f.restaurant_id = r.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
     if (category && category.toLowerCase() !== 'all') {
-      const stmt = db.prepare(`
-        SELECT id, name, description, base_price, sale_price, is_available, category, rating, image_url, created_at 
-        FROM food_items 
-        WHERE category = ? 
-        ORDER BY id DESC
-      `);
-      return stmt.all(category) as FoodItem[];
-    } else {
-      const stmt = db.prepare(`
-        SELECT id, name, description, base_price, sale_price, is_available, category, rating, image_url, created_at 
-        FROM food_items 
-        ORDER BY id DESC
-      `);
-      return stmt.all() as FoodItem[];
+      query += ` AND f.category = ?`;
+      params.push(category);
     }
+    if (restaurantId) {
+      query += ` AND f.restaurant_id = ?`;
+      params.push(restaurantId);
+    }
+
+    query += ` ORDER BY f.id DESC`;
+
+    const stmt = db.prepare(query);
+    return stmt.all(...params) as FoodItem[];
   } finally {
     db.close();
   }
@@ -142,9 +205,10 @@ export function getFoodItemByIdFromDb(id: number): FoodItem | null {
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT id, name, description, base_price, sale_price, is_available, category, rating, image_url, created_at 
-      FROM food_items 
-      WHERE id = ?
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.created_at, r.name as restaurant_name 
+      FROM food_items f
+      LEFT JOIN restaurants r ON f.restaurant_id = r.id
+      WHERE f.id = ?
     `);
     const result = stmt.get(id);
     return (result as FoodItem) || null;
@@ -158,13 +222,90 @@ export function getSimilarFoodItemsFromDb(currentId: number, category: string, l
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT id, name, description, base_price, sale_price, is_available, category, rating, image_url, created_at 
-      FROM food_items 
-      WHERE id != ? AND (category = ? OR 1=1)
-      ORDER BY (CASE WHEN category = ? THEN 0 ELSE 1 END), id DESC
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.created_at, r.name as restaurant_name 
+      FROM food_items f
+      LEFT JOIN restaurants r ON f.restaurant_id = r.id
+      WHERE f.id != ? AND (f.category = ? OR 1=1)
+      ORDER BY (CASE WHEN f.category = ? THEN 0 ELSE 1 END), f.id DESC
       LIMIT ?
     `);
     return stmt.all(currentId, category, category, limit) as FoodItem[];
+  } finally {
+    db.close();
+  }
+}
+
+// Add a new food item for a restaurant
+export function createFoodItemInDb(item: {
+  restaurant_id: number;
+  name: string;
+  description?: string;
+  base_price: number;
+  sale_price: number;
+  category: string;
+  image_url?: string;
+  is_available?: boolean | number;
+}): FoodItem {
+  const db = getDb();
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, is_available)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const info = stmt.run(
+      item.restaurant_id,
+      item.name.trim(),
+      item.description?.trim() || null,
+      item.base_price,
+      item.sale_price,
+      item.category || 'Fast Food',
+      item.image_url || null,
+      item.is_available !== undefined ? (item.is_available ? 1 : 0) : 1
+    );
+
+    return {
+      id: info.lastInsertRowid as number,
+      restaurant_id: item.restaurant_id,
+      name: item.name,
+      description: item.description || '',
+      base_price: item.base_price,
+      sale_price: item.sale_price,
+      category: item.category,
+      image_url: item.image_url || '',
+      is_available: item.is_available !== undefined ? Boolean(item.is_available) : true,
+      rating: 4.8,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+// Update food item availability
+export function updateFoodItemAvailabilityInDb(itemId: number, restaurantId: number, isAvailable: boolean): boolean {
+  const db = getDb();
+  try {
+    const stmt = db.prepare(`
+      UPDATE food_items 
+      SET is_available = ? 
+      WHERE id = ? AND restaurant_id = ?
+    `);
+    const info = stmt.run(isAvailable ? 1 : 0, itemId, restaurantId);
+    return info.changes > 0;
+  } finally {
+    db.close();
+  }
+}
+
+// Delete food item for a restaurant
+export function deleteFoodItemInDb(itemId: number, restaurantId: number): boolean {
+  const db = getDb();
+  try {
+    const stmt = db.prepare(`
+      DELETE FROM food_items 
+      WHERE id = ? AND restaurant_id = ?
+    `);
+    const info = stmt.run(itemId, restaurantId);
+    return info.changes > 0;
   } finally {
     db.close();
   }
@@ -180,13 +321,14 @@ export function createUserInDb(user: {
   email: string;
   address?: string;
   gender?: string;
+  avatar_url?: string;
   password_hash: string;
 }): SafeUser {
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      INSERT INTO users (full_name, phone_number, email, address, gender, password_hash)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO users (full_name, phone_number, email, address, gender, avatar_url, password_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     const info = stmt.run(
       user.full_name,
@@ -194,6 +336,7 @@ export function createUserInDb(user: {
       user.email.toLowerCase(),
       user.address || null,
       user.gender || null,
+      user.avatar_url || null,
       user.password_hash
     );
 
@@ -204,6 +347,7 @@ export function createUserInDb(user: {
       email: user.email.toLowerCase(),
       address: user.address,
       gender: user.gender,
+      avatar_url: user.avatar_url,
     };
   } finally {
     db.close();
@@ -215,7 +359,7 @@ export function findUserByEmailOrPhoneFromDb(identifier: string): User | null {
   try {
     const cleanId = identifier.trim().toLowerCase();
     const stmt = db.prepare(`
-      SELECT id, full_name, phone_number, email, address, gender, password_hash, created_at 
+      SELECT id, full_name, phone_number, email, address, gender, avatar_url, password_hash, created_at 
       FROM users 
       WHERE LOWER(email) = ? OR LOWER(phone_number) = ?
     `);
@@ -230,12 +374,57 @@ export function findUserByIdFromDb(id: number): SafeUser | null {
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT id, full_name, phone_number, email, address, gender, created_at 
+      SELECT id, full_name, phone_number, email, address, gender, avatar_url, created_at 
       FROM users 
       WHERE id = ?
     `);
     const user = stmt.get(id);
     return (user as SafeUser) || null;
+  } finally {
+    db.close();
+  }
+}
+
+export function updateUserProfileInDb(userId: number, data: {
+  full_name?: string;
+  phone_number?: string;
+  address?: string;
+  gender?: string;
+  avatar_url?: string;
+}): SafeUser | null {
+  const db = getDb();
+  try {
+    const updates: string[] = [];
+    const params: any[] = [];
+
+    if (data.full_name !== undefined) {
+      updates.push('full_name = ?');
+      params.push(data.full_name.trim());
+    }
+    if (data.phone_number !== undefined) {
+      updates.push('phone_number = ?');
+      params.push(data.phone_number.trim());
+    }
+    if (data.address !== undefined) {
+      updates.push('address = ?');
+      params.push(data.address.trim());
+    }
+    if (data.gender !== undefined) {
+      updates.push('gender = ?');
+      params.push(data.gender);
+    }
+    if (data.avatar_url !== undefined) {
+      updates.push('avatar_url = ?');
+      params.push(data.avatar_url);
+    }
+
+    if (updates.length === 0) return findUserByIdFromDb(userId);
+
+    params.push(userId);
+    const stmt = db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`);
+    stmt.run(...params);
+
+    return findUserByIdFromDb(userId);
   } finally {
     db.close();
   }
@@ -250,6 +439,87 @@ export function updateUserAddressInDb(userId: number, address: string): void {
       WHERE id = ?
     `);
     stmt.run(address.trim(), userId);
+  } finally {
+    db.close();
+  }
+}
+
+// ============================================================
+// RESTAURANT DATABASE QUERIES (SQL Prepared Statements)
+// ============================================================
+
+export function createRestaurantInDb(rest: {
+  name: string;
+  owner_name: string;
+  email: string;
+  phone_number: string;
+  address: string;
+  trade_licence_url?: string;
+  categories: string;
+  image_url?: string;
+  password_hash: string;
+}): SafeRestaurant {
+  const db = getDb();
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO restaurants (name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, password_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const info = stmt.run(
+      rest.name.trim(),
+      rest.owner_name.trim(),
+      rest.email.toLowerCase().trim(),
+      rest.phone_number.trim(),
+      rest.address.trim(),
+      rest.trade_licence_url || null,
+      rest.categories || 'Fast Food, Juice',
+      rest.image_url || null,
+      rest.password_hash
+    );
+
+    return {
+      id: info.lastInsertRowid as number,
+      name: rest.name,
+      owner_name: rest.owner_name,
+      email: rest.email.toLowerCase(),
+      phone_number: rest.phone_number,
+      address: rest.address,
+      trade_licence_url: rest.trade_licence_url,
+      categories: rest.categories,
+      image_url: rest.image_url,
+      rating: 4.8,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export function findRestaurantByEmailOrPhoneOrNameFromDb(identifier: string): Restaurant | null {
+  const db = getDb();
+  try {
+    const cleanId = identifier.trim().toLowerCase();
+    const stmt = db.prepare(`
+      SELECT id, name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, rating, password_hash, created_at 
+      FROM restaurants 
+      WHERE LOWER(email) = ? OR LOWER(phone_number) = ? OR LOWER(name) = ?
+    `);
+    const rest = stmt.get(cleanId, cleanId, cleanId);
+    return (rest as Restaurant) || null;
+  } finally {
+    db.close();
+  }
+}
+
+export function findRestaurantByIdFromDb(id: number): SafeRestaurant | null {
+  const db = getDb();
+  try {
+    const stmt = db.prepare(`
+      SELECT id, name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, rating, created_at 
+      FROM restaurants 
+      WHERE id = ?
+    `);
+    const rest = stmt.get(id);
+    return (rest as SafeRestaurant) || null;
   } finally {
     db.close();
   }
@@ -304,4 +574,3 @@ export function createOrderInDb(input: CreateOrderInput): { orderId: number } {
     db.close();
   }
 }
-

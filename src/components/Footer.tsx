@@ -23,7 +23,7 @@ export default function Footer() {
               </span>
             </div>
             <p className="text-slate-400 text-sm leading-relaxed max-w-md">
-              Kheye Now! is an advanced food delivery web application built for CSE Database Course evaluation. Powered by Next.js and high-performance SQL database engine.
+              Kheye Now! is a modern food delivery system to revolutionize the way people enjoy and order food.It enhances our day to day life by easing the worries of fnot only saves time but also provides comfort and convenience in ordering delicious meals from your favorite restaurants.So Order Now and enjoy the food with your loved one.
             </p>
             <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 pt-2">
               <Database className="w-4 h-4" />
