@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS food_items (
     category VARCHAR(100) DEFAULT 'General',
     rating DECIMAL(3, 2) DEFAULT 4.8,
     image_url TEXT,
+    images_json TEXT DEFAULT '[]',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
 );

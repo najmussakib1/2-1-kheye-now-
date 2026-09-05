@@ -3,7 +3,13 @@
 import React, { useState, useEffect } from 'react';
 import { FoodItem } from '@/lib/db';
 import ProductCard from './ProductCard';
-import { Search, Utensils, Sparkles, Filter } from 'lucide-react';
+import { Search, Utensils, Sparkles, Filter, Store } from 'lucide-react';
+
+interface Restaurant {
+  id: number;
+  name: string;
+  image_url: string | null;
+}
 
 interface ProductGridProps {
   selectedCategory: string;
@@ -19,19 +25,32 @@ export default function ProductGrid({
   const [items, setItems] = useState<FoodItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [selectedRestaurantId, setSelectedRestaurantId] = useState<number | null>(null);
 
-  const categories = ['All', 'Burgers', 'Pizza', 'Desi Feast', 'Pasta', 'Beverages', 'Desserts'];
+  const categories = ['All', 'Burgers', 'Pizza', 'Desi Feast', 'Pasta', 'Beverages', 'Juice', 'Desserts'];
 
-  const fetchItems = async (category: string) => {
+  // Fetch restaurants for filter pills
+  useEffect(() => {
+    fetch('/api/restaurants')
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.success) setRestaurants(json.data || []);
+      })
+      .catch(console.error);
+  }, []);
+
+  const fetchItems = async (category: string, restaurantId: number | null, search: string) => {
     setLoading(true);
     try {
-      const url = category === 'All' 
-        ? '/api/food-items' 
-        : `/api/food-items?category=${encodeURIComponent(category)}`;
-      
+      const params = new URLSearchParams();
+      if (category !== 'All') params.set('category', category);
+      if (restaurantId !== null) params.set('restaurant_id', String(restaurantId));
+      if (search.trim()) params.set('search', search.trim());
+
+      const url = `/api/food-items${params.toString() ? '?' + params.toString() : ''}`;
       const res = await fetch(url);
       const json = await res.json();
-      
       if (json.success) {
         setItems(json.data);
       }
@@ -42,14 +61,21 @@ export default function ProductGrid({
     }
   };
 
+  // Fetch when category or restaurant filter changes
   useEffect(() => {
-    fetchItems(selectedCategory);
-  }, [selectedCategory]);
+    fetchItems(selectedCategory, selectedRestaurantId, searchQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategory, selectedRestaurantId]);
 
-  const filteredItems = items.filter((item) =>
-    item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Client-side search filter (instant, no API call) — API-side search is also available
+  const filteredItems = searchQuery.trim()
+    ? items.filter(
+        (item) =>
+          item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (item.restaurant_name && item.restaurant_name.toLowerCase().includes(searchQuery.toLowerCase()))
+      )
+    : items;
 
   return (
     <section id="menu" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -76,14 +102,14 @@ export default function ProductGrid({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search burgers, biryani, pizza..."
+            placeholder="Search dishes or restaurants..."
             className="w-full pl-10 pr-4 py-2.5 rounded-full bg-slate-900/80 border border-emerald-500/30 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all backdrop-blur-md"
           />
         </div>
       </div>
 
       {/* Category Pills Filter */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-4 scrollbar-none mb-10">
+      <div className="flex items-center gap-2 overflow-x-auto pb-4 scrollbar-none mb-4">
         <span className="text-xs font-bold text-slate-400 flex items-center gap-1 pr-2">
           <Filter className="w-3.5 h-3.5 text-emerald-400" />
           <span>Category:</span>
@@ -105,6 +131,43 @@ export default function ProductGrid({
           );
         })}
       </div>
+
+      {/* Restaurant Filter Pills */}
+      {restaurants.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-4 scrollbar-none mb-10">
+          <span className="text-xs font-bold text-slate-400 flex items-center gap-1 pr-2">
+            <Store className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Restaurant:</span>
+          </span>
+          {/* All restaurants pill */}
+          <button
+            onClick={() => setSelectedRestaurantId(null)}
+            className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all duration-300 flex items-center gap-1.5 ${
+              selectedRestaurantId === null
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.4)] scale-105'
+                : 'bg-slate-900/60 border border-emerald-500/20 text-emerald-300/80 hover:border-emerald-400/60 hover:text-white'
+            }`}
+          >
+            All Restaurants
+          </button>
+          {restaurants.map((r) => (
+            <button
+              key={r.id}
+              onClick={() => setSelectedRestaurantId(r.id)}
+              className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all duration-300 flex items-center gap-1.5 ${
+                selectedRestaurantId === r.id
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.4)] scale-105'
+                  : 'bg-slate-900/60 border border-emerald-500/20 text-emerald-300/80 hover:border-emerald-400/60 hover:text-white'
+              }`}
+            >
+              {r.image_url && (
+                <img src={r.image_url} alt={r.name} className="w-4 h-4 rounded-full object-cover" />
+              )}
+              {r.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Products Grid */}
       {loading ? (
@@ -128,6 +191,7 @@ export default function ProductGrid({
             onClick={() => {
               onSelectCategory('All');
               setSearchQuery('');
+              setSelectedRestaurantId(null);
             }}
             className="mt-4 px-5 py-2 rounded-full bg-emerald-500/20 border border-emerald-400 text-emerald-300 text-xs font-bold hover:bg-emerald-500 hover:text-slate-950 transition-all"
           >

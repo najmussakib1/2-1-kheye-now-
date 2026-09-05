@@ -88,7 +88,7 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
       <nav className="relative bg-slate-950/85 backdrop-blur-xl border-b border-emerald-500/20 px-4 lg:px-8 py-3 flex items-center justify-between shadow-2xl">
         
         {/* LEFT SIDE: KHEYE NOW! Brand Logo Block */}
-        <Link href="/" className="flex items-center gap-3 group">
+        <Link href={role === 'restaurant' ? '/restaurant/dashboard' : '/'} className="flex items-center gap-3 group">
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-500/30 to-teal-500/10 border border-emerald-400/50 flex items-center justify-center group-hover:scale-105 group-hover:rotate-6 transition-all duration-300 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
             <Utensils className="w-5 h-5 text-emerald-400" />
           </div>
@@ -104,12 +104,14 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
 
         {/* CENTER: Navigation Links */}
         <div className="hidden md:flex items-center gap-8">
-          <Link 
-            href="/" 
-            className="text-sm font-semibold text-emerald-300/90 hover:text-emerald-100 hover:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] transition-all"
-          >
-            Home
-          </Link>
+          {role !== 'restaurant' && (
+            <Link 
+              href="/" 
+              className="text-sm font-semibold text-emerald-300/90 hover:text-emerald-100 hover:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] transition-all"
+            >
+              Home
+            </Link>
+          )}
 
           {role === 'restaurant' ? (
             <Link 
@@ -189,8 +191,12 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
                     onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
                     className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-400 transition-all"
                   >
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center shadow-[0_0_10px_rgba(16,185,129,0.4)]">
-                      <Store className="w-3.5 h-3.5 text-slate-950" />
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center shadow-[0_0_10px_rgba(16,185,129,0.4)] overflow-hidden flex-shrink-0">
+                      {restaurant.image_url ? (
+                        <img src={restaurant.image_url} alt={restaurant.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <Store className="w-3.5 h-3.5 text-slate-950" />
+                      )}
                     </div>
                     <span className="hidden sm:block text-sm font-semibold text-emerald-300 max-w-[120px] truncate">
                       {restaurant.name}
@@ -220,6 +226,14 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
                           <LayoutDashboard className="w-4 h-4 text-emerald-400" />
                           <span>Restaurant Dashboard</span>
                         </Link>
+
+                        <button
+                          onClick={() => { setIsUserMenuOpen(false); openProfileModal('edit'); }}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:bg-emerald-500/10 hover:text-emerald-300 transition-colors"
+                        >
+                          <Edit3 className="w-4 h-4 text-emerald-400" />
+                          <span>Edit Profile</span>
+                        </button>
 
                         <div className="my-1 border-t border-emerald-500/15" />
 

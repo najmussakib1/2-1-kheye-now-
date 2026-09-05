@@ -34,6 +34,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const [similarItems, setSimilarItems] = useState<FoodItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const { addToCart, startPlaceOrderFlow } = useApp();
 
   useEffect(() => {
@@ -140,7 +141,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 {/* Big Image Container */}
                 <div className="relative h-[380px] sm:h-[450px] w-full rounded-2xl overflow-hidden bg-slate-950">
                   <img
-                    src={item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1000&auto=format&fit=crop&q=80'}
+                    src={selectedImage || item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1000&auto=format&fit=crop&q=80'}
                     alt={item.name}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
                   />
@@ -180,7 +181,42 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                   </div>
                 </div>
 
+                {/* Thumbnail Strip (only shows when there are multiple images) */}
+                {item.images && item.images.length > 1 && (
+                  <div className="flex gap-2 mt-3 overflow-x-auto scrollbar-none">
+                    {item.images.map((src, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setSelectedImage(src)}
+                        className={`flex-shrink-0 w-14 h-14 rounded-xl overflow-hidden border-2 transition-all ${
+                          (selectedImage || item.image_url) === src
+                            ? 'border-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+                            : 'border-slate-700 hover:border-emerald-500/60'
+                        }`}
+                      >
+                        <img src={src} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
+
+              {/* Restaurant Branding Card */}
+              {(item.restaurant_name || item.restaurant_logo) && (
+                <div className="p-4 rounded-2xl border border-emerald-500/20 bg-slate-900/60 backdrop-blur-md flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center overflow-hidden flex-shrink-0">
+                    {item.restaurant_logo ? (
+                      <img src={item.restaurant_logo} alt={item.restaurant_name || 'Restaurant'} className="w-full h-full object-cover" />
+                    ) : (
+                      <Sparkles className="w-5 h-5 text-slate-950" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Served by</p>
+                    <p className="text-sm font-bold text-white">{item.restaurant_name || 'Restaurant'}</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* RIGHT SIDE: Product Information, Ratings & Ordering */}

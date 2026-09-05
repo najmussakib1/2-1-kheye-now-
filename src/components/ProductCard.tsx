@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { FoodItem } from '@/lib/db';
 import { useApp } from '@/context/AppContext';
-import { ShoppingCart, Star, CheckCircle2, XCircle, Tag, Eye } from 'lucide-react';
+import { ShoppingCart, Star, CheckCircle2, XCircle, Tag, Eye, Store } from 'lucide-react';
 
 interface ProductCardProps {
   item: FoodItem;
@@ -90,6 +90,12 @@ export default function ProductCard({ item, onAddToCart }: ProductCardProps) {
               {item.name}
             </h3>
           </Link>
+          {item.restaurant_name && (
+            <p className="text-[10px] font-semibold text-emerald-400/70 mt-0.5 flex items-center gap-1">
+              <Store className="w-3 h-3" />
+              {item.restaurant_name}
+            </p>
+          )}
           <p className="text-xs text-slate-400 line-clamp-2 mt-1 leading-relaxed">
             {item.description}
           </p>

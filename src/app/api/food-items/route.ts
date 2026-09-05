@@ -5,8 +5,10 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category') || undefined;
+    const restaurantId = searchParams.get('restaurant_id') ? Number(searchParams.get('restaurant_id')) : undefined;
+    const search = searchParams.get('search') || undefined;
 
-    const items = getFoodItemsFromDb(category);
+    const items = getFoodItemsFromDb(category, restaurantId, search);
     return NextResponse.json({ success: true, count: items.length, data: items });
   } catch (error: any) {
     console.error('API Error executing SQL query:', error);

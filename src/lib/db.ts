@@ -12,8 +12,11 @@ export interface FoodItem {
   category: string;
   rating: number;
   image_url: string;
+  images?: string[];
+  images_json?: string;
   created_at?: string;
   restaurant_name?: string;
+  restaurant_logo?: string;
 }
 
 export interface User {
@@ -118,6 +121,7 @@ export function getDb() {
         category VARCHAR(100) DEFAULT 'General',
         rating DECIMAL(3, 2) DEFAULT 4.8,
         image_url TEXT,
+        images_json TEXT DEFAULT '[]',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE
     );
@@ -170,12 +174,34 @@ export function getDb() {
   return db;
 }
 
-// SQL Query method to get all food items or filter by category
-export function getFoodItemsFromDb(category?: string, restaurantId?: number): FoodItem[] {
+function formatFoodItem(row: any): FoodItem {
+  let images: string[] = [];
+  if (row.images_json) {
+    try {
+      const parsed = JSON.parse(row.images_json);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        images = parsed;
+      }
+    } catch {
+      // ignore json parse error
+    }
+  }
+  if (images.length === 0 && row.image_url) {
+    images = [row.image_url];
+  }
+  return {
+    ...row,
+    images,
+    images_json: row.images_json || JSON.stringify(images),
+  };
+}
+
+// SQL Query method to get all food items or filter by category, restaurant, or search term
+export function getFoodItemsFromDb(category?: string, restaurantId?: number, search?: string): FoodItem[] {
   const db = getDb();
   try {
     let query = `
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.created_at, r.name as restaurant_name 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE 1=1
@@ -190,11 +216,17 @@ export function getFoodItemsFromDb(category?: string, restaurantId?: number): Fo
       query += ` AND f.restaurant_id = ?`;
       params.push(restaurantId);
     }
+    if (search && search.trim()) {
+      query += ` AND (LOWER(f.name) LIKE ? OR LOWER(f.description) LIKE ? OR LOWER(r.name) LIKE ?)`;
+      const s = `%${search.trim().toLowerCase()}%`;
+      params.push(s, s, s);
+    }
 
     query += ` ORDER BY f.id DESC`;
 
     const stmt = db.prepare(query);
-    return stmt.all(...params) as FoodItem[];
+    const rows = stmt.all(...params);
+    return rows.map(formatFoodItem);
   } finally {
     db.close();
   }
@@ -205,13 +237,13 @@ export function getFoodItemByIdFromDb(id: number): FoodItem | null {
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.created_at, r.name as restaurant_name 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE f.id = ?
     `);
     const result = stmt.get(id);
-    return (result as FoodItem) || null;
+    return result ? formatFoodItem(result) : null;
   } finally {
     db.close();
   }
@@ -222,20 +254,21 @@ export function getSimilarFoodItemsFromDb(currentId: number, category: string, l
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.created_at, r.name as restaurant_name 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE f.id != ? AND (f.category = ? OR 1=1)
       ORDER BY (CASE WHEN f.category = ? THEN 0 ELSE 1 END), f.id DESC
       LIMIT ?
     `);
-    return stmt.all(currentId, category, category, limit) as FoodItem[];
+    const rows = stmt.all(currentId, category, category, limit);
+    return rows.map(formatFoodItem);
   } finally {
     db.close();
   }
 }
 
-// Add a new food item for a restaurant
+// Add a new food item for a restaurant (supports multiple images)
 export function createFoodItemInDb(item: {
   restaurant_id: number;
   name: string;
@@ -244,13 +277,21 @@ export function createFoodItemInDb(item: {
   sale_price: number;
   category: string;
   image_url?: string;
+  images?: string[];
+  images_json?: string;
   is_available?: boolean | number;
 }): FoodItem {
   const db = getDb();
   try {
+    const imagesList = item.images && item.images.length > 0
+      ? item.images
+      : item.image_url ? [item.image_url] : [];
+    const imagesJson = item.images_json || JSON.stringify(imagesList);
+    const coverImage = imagesList[0] || item.image_url || '';
+
     const stmt = db.prepare(`
-      INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, is_available)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, images_json, is_available)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const info = stmt.run(
       item.restaurant_id,
@@ -259,7 +300,8 @@ export function createFoodItemInDb(item: {
       item.base_price,
       item.sale_price,
       item.category || 'Fast Food',
-      item.image_url || null,
+      coverImage || null,
+      imagesJson,
       item.is_available !== undefined ? (item.is_available ? 1 : 0) : 1
     );
 
@@ -271,10 +313,77 @@ export function createFoodItemInDb(item: {
       base_price: item.base_price,
       sale_price: item.sale_price,
       category: item.category,
-      image_url: item.image_url || '',
+      image_url: coverImage,
+      images: imagesList,
+      images_json: imagesJson,
       is_available: item.is_available !== undefined ? Boolean(item.is_available) : true,
       rating: 4.8,
     };
+  } finally {
+    db.close();
+  }
+}
+
+// Update food item in DB (supports editing all details and multiple images)
+export function updateFoodItemInDb(
+  itemId: number,
+  restaurantId: number,
+  updates: {
+    name?: string;
+    description?: string;
+    base_price?: number;
+    sale_price?: number;
+    category?: string;
+    image_url?: string;
+    images?: string[];
+    images_json?: string;
+    is_available?: boolean | number;
+  }
+): FoodItem | null {
+  const db = getDb();
+  try {
+    const current = db.prepare('SELECT * FROM food_items WHERE id = ? AND restaurant_id = ?').get(itemId, restaurantId) as any;
+    if (!current) return null;
+
+    let imagesList = updates.images;
+    let imagesJson = updates.images_json;
+    if (imagesList && imagesList.length > 0) {
+      imagesJson = JSON.stringify(imagesList);
+    } else if (imagesJson) {
+      try {
+        imagesList = JSON.parse(imagesJson);
+      } catch {
+        imagesList = [];
+      }
+    } else if (updates.image_url) {
+      imagesList = [updates.image_url];
+      imagesJson = JSON.stringify(imagesList);
+    } else {
+      imagesJson = current.images_json || '[]';
+      try {
+        imagesList = JSON.parse(imagesJson);
+      } catch {
+        imagesList = current.image_url ? [current.image_url] : [];
+      }
+    }
+
+    const coverImage = (imagesList && imagesList.length > 0) ? imagesList[0] : (updates.image_url ?? current.image_url);
+
+    const name = updates.name !== undefined ? updates.name.trim() : current.name;
+    const description = updates.description !== undefined ? updates.description.trim() : current.description;
+    const base_price = updates.base_price !== undefined ? updates.base_price : current.base_price;
+    const sale_price = updates.sale_price !== undefined ? updates.sale_price : current.sale_price;
+    const category = updates.category !== undefined ? updates.category.trim() : current.category;
+    const is_available = updates.is_available !== undefined ? (updates.is_available ? 1 : 0) : current.is_available;
+
+    const stmt = db.prepare(`
+      UPDATE food_items
+      SET name = ?, description = ?, base_price = ?, sale_price = ?, category = ?, image_url = ?, images_json = ?, is_available = ?
+      WHERE id = ? AND restaurant_id = ?
+    `);
+    stmt.run(name, description, base_price, sale_price, category, coverImage, imagesJson, is_available, itemId, restaurantId);
+
+    return getFoodItemByIdFromDb(itemId);
   } finally {
     db.close();
   }
@@ -520,6 +629,58 @@ export function findRestaurantByIdFromDb(id: number): SafeRestaurant | null {
     `);
     const rest = stmt.get(id);
     return (rest as SafeRestaurant) || null;
+  } finally {
+    db.close();
+  }
+}
+
+// Update restaurant profile details (including logo image_url)
+export function updateRestaurantProfileInDb(
+  id: number,
+  updates: {
+    name?: string;
+    owner_name?: string;
+    phone_number?: string;
+    address?: string;
+    categories?: string;
+    image_url?: string;
+  }
+): SafeRestaurant | null {
+  const db = getDb();
+  try {
+    const current = findRestaurantByIdFromDb(id);
+    if (!current) return null;
+
+    const name = updates.name !== undefined ? updates.name.trim() : current.name;
+    const owner_name = updates.owner_name !== undefined ? updates.owner_name.trim() : current.owner_name;
+    const phone_number = updates.phone_number !== undefined ? updates.phone_number.trim() : current.phone_number;
+    const address = updates.address !== undefined ? updates.address.trim() : current.address;
+    const categories = updates.categories !== undefined ? updates.categories.trim() : current.categories;
+    const image_url = updates.image_url !== undefined ? updates.image_url.trim() : (current.image_url || null);
+
+    const stmt = db.prepare(`
+      UPDATE restaurants
+      SET name = ?, owner_name = ?, phone_number = ?, address = ?, categories = ?, image_url = ?
+      WHERE id = ?
+    `);
+    stmt.run(name, owner_name, phone_number, address, categories, image_url, id);
+
+    return findRestaurantByIdFromDb(id);
+  } finally {
+    db.close();
+  }
+}
+
+// Fetch all registered restaurants for customer search and filter
+export function getAllRestaurantsFromDb(): SafeRestaurant[] {
+  const db = getDb();
+  try {
+    const stmt = db.prepare(`
+      SELECT id, name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, rating, created_at 
+      FROM restaurants 
+      ORDER BY id ASC
+    `);
+    return stmt.all() as SafeRestaurant[];
   } finally {
     db.close();
   }

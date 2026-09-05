@@ -4,6 +4,7 @@ import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 import {
   getFoodItemsFromDb,
   createFoodItemInDb,
+  updateFoodItemInDb,
   updateFoodItemAvailabilityInDb,
   deleteFoodItemInDb,
 } from '@/lib/db';
@@ -35,7 +36,7 @@ export async function GET() {
   }
 }
 
-// POST /api/restaurant/foods -> create new food item for logged-in restaurant
+// POST /api/restaurant/foods -> create new food item with multiple images
 export async function POST(request: Request) {
   try {
     const cookieStore = await cookies();
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name, description, base_price, sale_price, category, image_url, is_available } = body;
+    const { name, description, base_price, sale_price, category, image_url, images, is_available } = body;
 
     if (!name || !name.trim()) {
       return NextResponse.json({ success: false, error: 'Food name is required' }, { status: 400 });
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
       sale_price: Number(sale_price),
       category: category || 'Fast Food',
       image_url: image_url?.trim() || '',
+      images: Array.isArray(images) ? images : (image_url ? [image_url] : []),
       is_available: is_available !== undefined ? is_available : true,
     });
 
@@ -79,6 +81,55 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('Error in /api/restaurant/foods POST:', error);
     return NextResponse.json({ success: false, error: 'Failed to create food item' }, { status: 500 });
+  }
+}
+
+// PUT /api/restaurant/foods -> edit existing food item
+export async function PUT(request: Request) {
+  try {
+    const cookieStore = await cookies();
+    const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+
+    if (!token) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const session = verifySessionToken(token);
+    if (!session || session.role !== 'restaurant') {
+      return NextResponse.json({ success: false, error: 'Forbidden: Only restaurants can access this' }, { status: 403 });
+    }
+
+    const body = await request.json();
+    const { item_id, id, name, description, base_price, sale_price, category, image_url, images, is_available } = body;
+    const targetId = Number(item_id || id);
+
+    if (!targetId) {
+      return NextResponse.json({ success: false, error: 'item_id is required' }, { status: 400 });
+    }
+
+    const updated = updateFoodItemInDb(targetId, session.id, {
+      name: name !== undefined ? name : undefined,
+      description: description !== undefined ? description : undefined,
+      base_price: base_price !== undefined ? Number(base_price) : undefined,
+      sale_price: sale_price !== undefined ? Number(sale_price) : undefined,
+      category: category !== undefined ? category : undefined,
+      image_url: image_url !== undefined ? image_url : undefined,
+      images: Array.isArray(images) ? images : undefined,
+      is_available: is_available !== undefined ? is_available : undefined,
+    });
+
+    if (!updated) {
+      return NextResponse.json({ success: false, error: 'Food item not found or unauthorized' }, { status: 404 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Food item updated successfully!',
+      data: updated,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/restaurant/foods PUT:', error);
+    return NextResponse.json({ success: false, error: 'Failed to update food item' }, { status: 500 });
   }
 }
 
