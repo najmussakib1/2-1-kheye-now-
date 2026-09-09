@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import SimilarProductsSlider from '@/components/SimilarProductsSlider';
-import { FoodItem } from '@/lib/db';
+import { FoodItem, FoodAddon } from '@/lib/db';
 import { useApp } from '@/context/AppContext';
 import { 
   Star, 
@@ -16,14 +16,14 @@ import {
   XCircle, 
   ArrowLeft, 
   Clock, 
-  
   Flame, 
   ShieldCheck, 
   Sparkles, 
   Utensils, 
   Share2, 
   Heart,
-  Check
+  Check,
+  Layers,
 } from 'lucide-react';
 
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -32,23 +32,33 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
 
   const [item, setItem] = useState<FoodItem | null>(null);
   const [similarItems, setSimilarItems] = useState<FoodItem[]>([]);
+  const [addons, setAddons] = useState<FoodAddon[]>([]);
+  const [selectedAddons, setSelectedAddons] = useState<FoodAddon[]>([]);
   const [loading, setLoading] = useState(true);
   const [quantity, setQuantity] = useState(1);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const { addToCart, startPlaceOrderFlow } = useApp();
+  const { addToCart, startPlaceOrderFlow, toggleWishlist, isWishlisted } = useApp();
 
   useEffect(() => {
     async function fetchProductDetails() {
       setLoading(true);
       try {
-        const res = await fetch(`/api/food-items/${productId}`);
-        const json = await res.json();
-        if (json.success) {
-          setItem(json.data);
-          setSimilarItems(json.similarItems || []);
+        const [foodRes, addonRes] = await Promise.all([
+          fetch(`/api/food-items/${productId}`),
+          fetch(`/api/addons?food_id=${productId}`),
+        ]);
+        const foodJson = await foodRes.json();
+        const addonJson = await addonRes.json();
+
+        if (foodJson.success) {
+          setItem(foodJson.data);
+          setSimilarItems(foodJson.similarItems || []);
+        }
+        if (addonJson.success) {
+          setAddons(addonJson.data || []);
         }
       } catch (err) {
-        console.error('Error fetching product detail:', err);
+        console.error('Error fetching product detail or addons:', err);
       } finally {
         setLoading(false);
       }
@@ -56,13 +66,23 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     fetchProductDetails();
   }, [productId]);
 
+  const toggleAddon = (addon: FoodAddon) => {
+    setSelectedAddons((prev) => {
+      const exists = prev.some((a) => a.id === addon.id);
+      if (exists) {
+        return prev.filter((a) => a.id !== addon.id);
+      }
+      return [...prev, addon];
+    });
+  };
+
   const handleAddToCart = (food: FoodItem, count = 1) => {
-    addToCart(food, count);
+    addToCart(food, count, selectedAddons);
   };
 
   const handleOrderNowClick = () => {
     if (!item) return;
-    startPlaceOrderFlow({ directItem: item, directQuantity: quantity });
+    startPlaceOrderFlow({ directItem: item, directQuantity: quantity, selectedAddons });
   };
 
   if (loading) {
@@ -161,8 +181,16 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
 
                   {/* Top Right Action Icons */}
                   <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
-                    <button className="p-2.5 rounded-full bg-slate-950/70 backdrop-blur-md border border-emerald-500/30 text-emerald-300 hover:text-rose-400 hover:border-rose-400/50 transition-all">
-                      <Heart className="w-4 h-4" />
+                    <button
+                      onClick={() => toggleWishlist(item.id)}
+                      className={`p-2.5 rounded-full backdrop-blur-md border transition-all ${
+                        isWishlisted(item.id)
+                          ? 'bg-rose-500/30 border-rose-400/60 text-rose-400'
+                          : 'bg-slate-950/70 border-emerald-500/30 text-emerald-300 hover:text-rose-400 hover:border-rose-400/50'
+                      }`}
+                      aria-label={isWishlisted(item.id) ? 'Remove from wishlist' : 'Add to wishlist'}
+                    >
+                      <Heart className={`w-4 h-4 ${isWishlisted(item.id) ? 'fill-rose-400' : ''}`} />
                     </button>
                     <button className="p-2.5 rounded-full bg-slate-950/70 backdrop-blur-md border border-emerald-500/30 text-emerald-300 hover:text-white transition-all">
                       <Share2 className="w-4 h-4" />
@@ -267,11 +295,78 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               </div>
 
-              {/* Pricing Section (No "Base Price" text, only sale price and base price in delete mode) */}
+              {/* Add-ons & Customizations Section */}
+              {addons.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Choose Add-ons & Extras:</span>
+                    </label>
+                    <span className="text-[11px] text-emerald-400 font-semibold">
+                      {selectedAddons.length} selected
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {addons.map((addon) => {
+                      const isSelected = selectedAddons.some((a) => a.id === addon.id);
+
+                      return (
+                        <button
+                          key={addon.id}
+                          type="button"
+                          onClick={() => toggleAddon(addon)}
+                          className={`p-2.5 rounded-2xl border text-left flex items-center justify-between gap-3 transition-all duration-200 group ${
+                            isSelected
+                              ? 'bg-emerald-500/15 border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.25)]'
+                              : 'bg-slate-900/60 border-emerald-500/20 hover:border-emerald-500/40'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            {/* Addon Picture Thumbnail */}
+                            <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-950 border border-emerald-500/30 flex-shrink-0">
+                              {addon.image_url ? (
+                                <img src={addon.image_url} alt={addon.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-emerald-400">
+                                  +৳
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-white truncate">{addon.name}</p>
+                              <p className="text-xs font-black text-emerald-400 mt-0.5">+৳{addon.price}</p>
+                            </div>
+                          </div>
+
+                          {/* Checkbox Indicator */}
+                          <div className={`w-5 h-5 rounded-lg border flex items-center justify-center transition-all flex-shrink-0 ${
+                            isSelected
+                              ? 'bg-emerald-500 border-emerald-400 text-slate-950'
+                              : 'border-slate-700 bg-slate-950 text-transparent'
+                          }`}>
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Pricing Section (Shows base price + selected add-ons) */}
               <div className="flex items-baseline gap-3 pt-2">
                 <span className="text-4xl font-black text-emerald-400 drop-shadow-[0_0_12px_rgba(16,185,129,0.4)]">
-                  ৳{item.sale_price}
+                  ৳{item.sale_price + selectedAddons.reduce((sum, a) => sum + Number(a.price), 0)}
                 </span>
+
+                {selectedAddons.length > 0 && (
+                  <span className="text-xs font-semibold text-emerald-300/90 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/20">
+                    Includes ৳{selectedAddons.reduce((sum, a) => sum + Number(a.price), 0)} add-ons
+                  </span>
+                )}
 
                 {item.base_price > item.sale_price && (
                   <del className="text-xl text-slate-500 font-bold decoration-rose-500/70">
@@ -305,7 +400,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                   </div>
                   
                   <span className="text-xs text-slate-400 font-medium">
-                    Total: <strong className="text-emerald-300 font-bold text-sm">৳{item.sale_price * quantity}</strong>
+                    Total: <strong className="text-emerald-300 font-bold text-base">
+                      ৳{(item.sale_price + selectedAddons.reduce((sum, a) => sum + Number(a.price), 0)) * quantity}
+                    </strong>
                   </span>
                 </div>
               </div>
@@ -326,7 +423,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                   <span>Add to Cart ({quantity})</span>
                 </button>
 
-                {/* Order Now Button (Non-functional stub as requested) */}
+                {/* Order Now Button */}
                 <button
                   onClick={handleOrderNowClick}
                   className="flex-1 min-w-[180px] py-3.5 px-6 rounded-2xl font-bold text-sm bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 hover:from-emerald-400 hover:to-teal-300 transition-all duration-300 shadow-[0_0_20px_rgba(16,185,129,0.4)] hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2"

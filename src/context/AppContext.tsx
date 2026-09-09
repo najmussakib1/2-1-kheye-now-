@@ -1,12 +1,14 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react';
-import { FoodItem, SafeRestaurant } from '@/lib/db';
+import { FoodItem, SafeRestaurant, FoodAddon } from '@/lib/db';
 
 // ---- Cart Types ----
 export interface CartItem {
+  id?: string; // unique key for food + specific addon combination
   food: FoodItem;
   quantity: number;
+  selectedAddons?: FoodAddon[];
 }
 
 // ---- User Type ----
@@ -31,6 +33,7 @@ export interface ToastInfo {
 export interface CheckoutOptions {
   directItem?: FoodItem;
   directQuantity?: number;
+  selectedAddons?: FoodAddon[];
 }
 
 // ---- Context Shape ----
@@ -40,9 +43,9 @@ interface AppContextType {
   cartCount: number;
   cartTotal: number;
   isCartOpen: boolean;
-  addToCart: (item: FoodItem, quantity?: number) => void;
-  removeFromCart: (itemId: number) => void;
-  updateQuantity: (itemId: number, quantity: number) => void;
+  addToCart: (item: FoodItem, quantity?: number, selectedAddons?: FoodAddon[]) => void;
+  removeFromCart: (itemId: number | string) => void;
+  updateQuantity: (itemId: number | string, quantity: number) => void;
   clearCart: () => void;
   openCart: () => void;
   closeCart: () => void;
@@ -83,6 +86,11 @@ interface AppContextType {
 
   // Seamless Place Order Workflow
   startPlaceOrderFlow: (options?: CheckoutOptions) => void;
+
+  // Wishlist
+  wishlistFoodIds: number[];
+  toggleWishlist: (foodId: number) => Promise<void>;
+  isWishlisted: (foodId: number) => boolean;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -114,9 +122,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [checkoutItems, setCheckoutItems] = useState<CartItem[]>([]);
   const [isDirectOrder, setIsDirectOrder] = useState(false);
 
+  // Wishlist State
+  const [wishlistFoodIds, setWishlistFoodIds] = useState<number[]>([]);
+
   // ---- Derived cart values ----
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
-  const cartTotal = cartItems.reduce((sum, item) => sum + item.food.sale_price * item.quantity, 0);
+  const cartTotal = cartItems.reduce((sum, item) => {
+    const addonsTotal = (item.selectedAddons || []).reduce((s, a) => s + Number(a.price), 0);
+    return sum + (Number(item.food.sale_price) + addonsTotal) * item.quantity;
+  }, 0);
 
   // ---- Toast handlers ----
   const hideToast = useCallback(() => {
@@ -171,33 +185,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
     refreshUser();
   }, [refreshUser]);
 
+  // ---- Wishlist: fetch IDs when user changes ----
+  useEffect(() => {
+    if (role === 'user') {
+      fetch('/api/wishlist')
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.foodIds) setWishlistFoodIds(data.foodIds);
+        })
+        .catch(() => {});
+    } else {
+      setWishlistFoodIds([]);
+    }
+  }, [role]);
+
   // ---- Cart actions ----
-  const addToCart = useCallback((item: FoodItem, quantity = 1) => {
+  const addToCart = useCallback((item: FoodItem, quantity = 1, selectedAddons?: FoodAddon[]) => {
+    const sortedAddons = selectedAddons ? [...selectedAddons].sort((a, b) => a.id - b.id) : [];
+    const addonKey = sortedAddons.map((a) => a.id).join('-');
+    const cartItemId = `${item.id}_${addonKey}`;
+
     setCartItems((prev) => {
-      const existing = prev.find((ci) => ci.food.id === item.id);
+      const existing = prev.find((ci) => (ci.id ? ci.id === cartItemId : ci.food.id === item.id && !ci.selectedAddons?.length && !sortedAddons.length));
       if (existing) {
-        return prev.map((ci) =>
-          ci.food.id === item.id ? { ...ci, quantity: ci.quantity + quantity } : ci
-        );
+        return prev.map((ci) => {
+          const match = ci.id ? ci.id === cartItemId : ci.food.id === item.id && !ci.selectedAddons?.length && !sortedAddons.length;
+          return match ? { ...ci, quantity: ci.quantity + quantity } : ci;
+        });
       }
-      return [...prev, { food: item, quantity }];
+      return [...prev, { id: cartItemId, food: item, quantity, selectedAddons: sortedAddons }];
     });
 
     const qtyText = quantity > 1 ? `${quantity}x ` : '';
-    showToast(`Added ${qtyText}"${item.name}" to your cart!`, 'success');
+    const addonText = sortedAddons.length > 0 ? ` (+${sortedAddons.length} addon${sortedAddons.length > 1 ? 's' : ''})` : '';
+    showToast(`Added ${qtyText}"${item.name}"${addonText} to your cart!`, 'success');
   }, [showToast]);
 
-  const removeFromCart = useCallback((itemId: number) => {
-    setCartItems((prev) => prev.filter((ci) => ci.food.id !== itemId));
+  const removeFromCart = useCallback((identifier: number | string) => {
+    setCartItems((prev) => prev.filter((ci) => (ci.id ? ci.id !== String(identifier) : ci.food.id !== Number(identifier))));
     showToast('Item removed from cart', 'info');
   }, [showToast]);
 
-  const updateQuantity = useCallback((itemId: number, quantity: number) => {
+  const updateQuantity = useCallback((identifier: number | string, quantity: number) => {
     if (quantity <= 0) {
-      setCartItems((prev) => prev.filter((ci) => ci.food.id !== itemId));
+      setCartItems((prev) => prev.filter((ci) => (ci.id ? ci.id !== String(identifier) : ci.food.id !== Number(identifier))));
     } else {
       setCartItems((prev) =>
-        prev.map((ci) => (ci.food.id === itemId ? { ...ci, quantity } : ci))
+        prev.map((ci) => {
+          const match = ci.id ? ci.id === String(identifier) : ci.food.id === Number(identifier);
+          return match ? { ...ci, quantity } : ci;
+        })
       );
     }
   }, []);
@@ -226,6 +263,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (options?.role) setAuthModalInitialRole(options.role);
     setIsAuthModalOpen(true);
   }, []);
+
+  // ---- Wishlist Actions ----
+  const toggleWishlist = useCallback(async (foodId: number) => {
+    if (!user) {
+      openAuthModal({ tab: 'signin', role: 'user' });
+      return;
+    }
+    try {
+      const res = await fetch('/api/wishlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ food_id: foodId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setWishlistFoodIds(prev =>
+          data.wishlisted
+            ? [...prev, foodId]
+            : prev.filter(id => id !== foodId)
+        );
+        showToast(
+          data.wishlisted ? 'Added to wishlist ❤️' : 'Removed from wishlist',
+          data.wishlisted ? 'success' : 'info'
+        );
+      }
+    } catch {
+      showToast('Failed to update wishlist', 'error');
+    }
+  }, [user, openAuthModal, showToast]);
+
+  const isWishlisted = useCallback((foodId: number) => wishlistFoodIds.includes(foodId), [wishlistFoodIds]);
 
   const closeAuthModal = useCallback(() => {
     setIsAuthModalOpen(false);
@@ -256,7 +324,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ---- Checkout / Place Order Modal Actions ----
   const openCheckoutModal = useCallback((options?: CheckoutOptions) => {
     if (options?.directItem) {
-      setCheckoutItems([{ food: options.directItem, quantity: options.directQuantity || 1 }]);
+      const sortedAddons = options.selectedAddons ? [...options.selectedAddons].sort((a, b) => a.id - b.id) : [];
+      const addonKey = sortedAddons.map((a) => a.id).join('-');
+      setCheckoutItems([{
+        id: `${options.directItem.id}_${addonKey}`,
+        food: options.directItem,
+        quantity: options.directQuantity || 1,
+        selectedAddons: sortedAddons,
+      }]);
       setIsDirectOrder(true);
     } else {
       setCheckoutItems(cartItems);
@@ -320,6 +395,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         openCheckoutModal,
         closeCheckoutModal,
         startPlaceOrderFlow,
+        wishlistFoodIds,
+        toggleWishlist,
+        isWishlisted,
       }}
     >
       {children}

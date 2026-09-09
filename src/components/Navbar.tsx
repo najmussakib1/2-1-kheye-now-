@@ -16,6 +16,8 @@ import {
   Edit3,
   Store,
   LayoutDashboard,
+  Bike,
+  Heart,
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { useRouter } from 'next/navigation';
@@ -122,12 +124,21 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
               <span>Restaurant Dashboard</span>
             </Link>
           ) : (
-            <Link 
-              href="#about" 
-              className="text-sm font-semibold text-emerald-300/90 hover:text-emerald-100 hover:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] transition-all"
-            >
-              About
-            </Link>
+            <>
+              <Link 
+                href="#about" 
+                className="text-sm font-semibold text-emerald-300/90 hover:text-emerald-100 hover:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)] transition-all"
+              >
+                About
+              </Link>
+              <Link 
+                href="/rider" 
+                className="text-sm font-semibold text-emerald-300/90 hover:text-emerald-100 flex items-center gap-1.5 transition-all"
+              >
+                <Bike className="w-4 h-4 text-emerald-400" />
+                <span>Rider Portal</span>
+              </Link>
+            </>
           )}
 
           {/* Category Dropdown */}
@@ -323,6 +334,16 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
                           <span>Edit Profile</span>
                         </button>
 
+                        {/* Wishlist Link */}
+                        <Link
+                          href="/wishlist"
+                          onClick={() => setIsUserMenuOpen(false)}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-200 hover:bg-rose-500/10 hover:text-rose-300 transition-colors"
+                        >
+                          <Heart className="w-4 h-4 text-rose-400" />
+                          <span>My Wishlist</span>
+                        </Link>
+
                         {/* Divider */}
                         <div className="my-1 border-t border-emerald-500/15" />
 
@@ -381,6 +402,15 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
           >
             Home
           </Link>
+
+          <Link 
+            href="/rider" 
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="text-base font-medium text-emerald-300 hover:text-emerald-100 flex items-center gap-2"
+          >
+            <Bike className="w-4 h-4 text-emerald-400" />
+            <span>Rider Portal</span>
+          </Link>
           
           {role === 'restaurant' && (
             <Link
@@ -415,6 +445,14 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
                 <Edit3 className="w-4 h-4" />
                 <span>Edit Profile</span>
               </button>
+              <Link
+                href="/wishlist"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="text-base font-medium text-rose-300 hover:text-rose-200 flex items-center gap-2"
+              >
+                <Heart className="w-4 h-4 text-rose-400" />
+                <span>My Wishlist</span>
+              </Link>
             </>
           )}
 

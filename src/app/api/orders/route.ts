@@ -66,6 +66,13 @@ export async function POST(request: Request) {
         food_name: it.food_name || it.food?.name || 'Food Item',
         price: Number(it.price || it.food?.sale_price) || 0,
         quantity: Number(it.quantity) || 1,
+        addons: Array.isArray(it.addons)
+          ? it.addons.map((a: any) => ({
+              addon_id: a.addon_id || a.id,
+              addon_name: a.addon_name || a.name,
+              price: Number(a.price) || 0,
+            }))
+          : [],
       })),
     });
 

@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { FoodItem } from '@/lib/db';
 import { useApp } from '@/context/AppContext';
-import { ShoppingCart, Star, CheckCircle2, XCircle, Tag, Eye, Store } from 'lucide-react';
+import { ShoppingCart, Star, CheckCircle2, XCircle, Tag, Eye, Store, Heart } from 'lucide-react';
 
 interface ProductCardProps {
   item: FoodItem;
@@ -12,7 +12,8 @@ interface ProductCardProps {
 }
 
 export default function ProductCard({ item, onAddToCart }: ProductCardProps) {
-  const { addToCart } = useApp();
+  const { addToCart, toggleWishlist, isWishlisted } = useApp();
+  const wishlisted = isWishlisted(item.id);
   const [imgSrc, setImgSrc] = useState(
     item.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800&auto=format&fit=crop&q=80'
   );
@@ -59,6 +60,20 @@ export default function ProductCard({ item, onAddToCart }: ProductCardProps) {
             </span>
           </div>
         )}
+
+        {/* Wishlist Heart Button */}
+        <button
+          onClick={(e) => { e.preventDefault(); toggleWishlist(item.id); }}
+          className={`absolute z-20 p-2 rounded-full backdrop-blur-md border transition-all duration-300 shadow-lg
+            ${discountPercent > 0 ? 'top-10 right-3' : 'top-3 right-3'}
+            ${wishlisted
+              ? 'bg-rose-500/30 border-rose-400/60 text-rose-400 hover:bg-rose-500/50'
+              : 'bg-slate-950/60 border-slate-600/50 text-slate-400 hover:text-rose-400 hover:border-rose-400/60'
+            }`}
+          aria-label={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+        >
+          <Heart className={`w-4 h-4 transition-all duration-200 ${wishlisted ? 'fill-rose-400' : ''}`} />
+        </button>
 
         {/* Rating Badge */}
         <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950/80 backdrop-blur-md border border-emerald-500/20 text-xs font-bold text-white">

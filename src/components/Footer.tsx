@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { Utensils, Heart, Database, MapPin, Phone, Mail } from 'lucide-react';
 
 export default function Footer() {
@@ -37,6 +38,7 @@ export default function Footer() {
             <ul className="space-y-2 text-sm text-slate-400">
               <li><a href="#" className="hover:text-emerald-400 transition-colors">Home Page</a></li>
               <li><a href="#menu" className="hover:text-emerald-400 transition-colors">Food Menu & SQL Grid</a></li>
+              <li><Link href="/rider" className="hover:text-emerald-400 text-emerald-300 font-semibold transition-colors">🚴 Rider Portal & Fleet</Link></li>
               <li><a href="#about" className="hover:text-emerald-400 transition-colors">About Project</a></li>
               <li><a href="#" className="hover:text-emerald-400 transition-colors">Categories Catalog</a></li>
             </ul>

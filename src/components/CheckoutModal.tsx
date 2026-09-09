@@ -71,10 +71,10 @@ export default function CheckoutModal() {
   const isAddressChanged = Boolean(currentAddress && currentAddress !== savedAddress);
 
   // Calculations
-  const subtotal = checkoutItems.reduce(
-    (sum, item) => sum + item.food.sale_price * item.quantity,
-    0
-  );
+  const subtotal = checkoutItems.reduce((sum, item) => {
+    const addonsTotal = (item.selectedAddons || []).reduce((s, a) => s + Number(a.price), 0);
+    return sum + (Number(item.food.sale_price) + addonsTotal) * item.quantity;
+  }, 0);
   const deliveryFee = checkoutItems.length > 0 ? 40 : 0;
   const grandTotal = subtotal + deliveryFee;
 
@@ -121,6 +121,11 @@ export default function CheckoutModal() {
             food_name: ci.food.name,
             price: ci.food.sale_price,
             quantity: ci.quantity,
+            addons: (ci.selectedAddons || []).map((ad) => ({
+              addon_id: ad.id,
+              addon_name: ad.name,
+              price: Number(ad.price),
+            })),
           })),
         }),
       });
@@ -290,29 +295,46 @@ export default function CheckoutModal() {
                   </span>
                 </div>
                 <div className="max-h-40 overflow-y-auto space-y-2 pr-1">
-                  {checkoutItems.map((ci) => (
-                    <div
-                      key={ci.food.id}
-                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/60 border border-emerald-500/15"
-                    >
-                      <div className="flex items-center gap-3">
-                        <img
-                          src={ci.food.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100&auto=format&fit=crop&q=80'}
-                          alt={ci.food.name}
-                          className="w-10 h-10 rounded-lg object-cover bg-slate-950"
-                        />
-                        <div>
-                          <p className="text-xs font-bold text-white line-clamp-1">{ci.food.name}</p>
-                          <p className="text-[11px] text-slate-400">
-                            ৳{ci.food.sale_price} × {ci.quantity}
-                          </p>
+                  {checkoutItems.map((ci) => {
+                    const itemKey = ci.id || String(ci.food.id);
+                    const addonsTotal = (ci.selectedAddons || []).reduce((s, a) => s + Number(a.price), 0);
+                    const itemTotal = (Number(ci.food.sale_price) + addonsTotal) * ci.quantity;
+
+                    return (
+                      <div
+                        key={itemKey}
+                        className="flex items-start justify-between p-2.5 rounded-xl bg-slate-900/60 border border-emerald-500/15"
+                      >
+                        <div className="flex items-start gap-3">
+                          <img
+                            src={ci.food.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100&auto=format&fit=crop&q=80'}
+                            alt={ci.food.name}
+                            className="w-10 h-10 rounded-lg object-cover bg-slate-950 flex-shrink-0 mt-0.5"
+                          />
+                          <div>
+                            <p className="text-xs font-bold text-white line-clamp-1">{ci.food.name}</p>
+                            <p className="text-[11px] text-slate-400">
+                              ৳{ci.food.sale_price} × {ci.quantity}
+                            </p>
+
+                            {/* Render Addons List */}
+                            {ci.selectedAddons && ci.selectedAddons.length > 0 && (
+                              <div className="mt-1 pl-2 border-l border-emerald-500/40 space-y-0.5">
+                                {ci.selectedAddons.map((ad, idx) => (
+                                  <p key={idx} className="text-[10px] text-emerald-300">
+                                    + {ad.name} (৳{ad.price})
+                                  </p>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         </div>
+                        <span className="text-xs font-bold text-emerald-400 flex-shrink-0">
+                          ৳{itemTotal}
+                        </span>
                       </div>
-                      <span className="text-xs font-bold text-emerald-400">
-                        ৳{ci.food.sale_price * ci.quantity}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 

@@ -34,7 +34,7 @@ export interface SessionData {
   full_name: string;
   email: string;
   phone_number: string;
-  role: 'user' | 'restaurant';
+  role: 'user' | 'restaurant' | 'rider';
   exp: number;
 }
 
@@ -43,7 +43,7 @@ export function createSessionToken(entity: {
   full_name: string;
   email: string;
   phone_number: string;
-  role?: 'user' | 'restaurant';
+  role?: 'user' | 'restaurant' | 'rider';
 }): string {
   const payload: SessionData = {
     id: entity.id,

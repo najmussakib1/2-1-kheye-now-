@@ -110,55 +110,74 @@ export default function CartSidebar() {
               </button>
             </div>
           ) : (
-            cartItems.map((ci) => (
-              <div
-                key={ci.food.id}
-                className="group flex gap-3 p-3.5 rounded-2xl border border-emerald-500/15 hover:border-emerald-500/30 transition-all"
-                style={{ background: 'rgba(15, 23, 42, 0.65)' }}
-              >
-                {/* Food Image */}
-                <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-slate-900">
-                  <img
-                    src={ci.food.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=200&auto=format&fit=crop&q=80'}
-                    alt={ci.food.name}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
+            cartItems.map((ci) => {
+              const itemKey = ci.id || String(ci.food.id);
+              const addonsTotal = (ci.selectedAddons || []).reduce((s, a) => s + Number(a.price), 0);
+              const itemTotalPrice = (Number(ci.food.sale_price) + addonsTotal) * ci.quantity;
 
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-white leading-tight line-clamp-1">{ci.food.name}</p>
-                  <p className="text-xs text-emerald-400 font-semibold mt-0.5">{ci.food.category}</p>
-                  <div className="flex items-center justify-between mt-2">
-                    {/* Quantity Controls */}
-                    <div className="flex items-center gap-1 bg-slate-900/80 border border-emerald-500/20 rounded-xl p-0.5">
-                      <button
-                        onClick={() => updateQuantity(ci.food.id, ci.quantity - 1)}
-                        className="p-1 rounded-lg text-emerald-400 hover:bg-emerald-500/20 transition-all"
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <span className="w-7 text-center text-sm font-bold text-white">{ci.quantity}</span>
-                      <button
-                        onClick={() => updateQuantity(ci.food.id, ci.quantity + 1)}
-                        className="p-1 rounded-lg text-emerald-400 hover:bg-emerald-500/20 transition-all"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    <span className="text-sm font-black text-emerald-400">৳{(ci.food.sale_price * ci.quantity).toFixed(0)}</span>
-                  </div>
-                </div>
-
-                {/* Remove */}
-                <button
-                  onClick={() => removeFromCart(ci.food.id)}
-                  className="p-1.5 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all opacity-0 group-hover:opacity-100 self-start"
+              return (
+                <div
+                  key={itemKey}
+                  className="group flex gap-3 p-3.5 rounded-2xl border border-emerald-500/15 hover:border-emerald-500/30 transition-all"
+                  style={{ background: 'rgba(15, 23, 42, 0.65)' }}
                 >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))
+                  {/* Food Image */}
+                  <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-slate-900">
+                    <img
+                      src={ci.food.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=200&auto=format&fit=crop&q=80'}
+                      alt={ci.food.name}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-white leading-tight line-clamp-1">{ci.food.name}</p>
+                    <p className="text-xs text-emerald-400 font-semibold mt-0.5">{ci.food.category}</p>
+
+                    {/* Selected Add-ons Display */}
+                    {ci.selectedAddons && ci.selectedAddons.length > 0 && (
+                      <div className="mt-1.5 pl-2 border-l-2 border-emerald-500/40 space-y-0.5">
+                        {ci.selectedAddons.map((ad, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-[11px] text-slate-300">
+                            <span className="text-emerald-300 truncate max-w-[140px]">+ {ad.name}</span>
+                            <span className="text-slate-400 font-medium">৳{ad.price}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between mt-2.5">
+                      {/* Quantity Controls */}
+                      <div className="flex items-center gap-1 bg-slate-900/80 border border-emerald-500/20 rounded-xl p-0.5">
+                        <button
+                          onClick={() => updateQuantity(itemKey, ci.quantity - 1)}
+                          className="p-1 rounded-lg text-emerald-400 hover:bg-emerald-500/20 transition-all"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="w-7 text-center text-sm font-bold text-white">{ci.quantity}</span>
+                        <button
+                          onClick={() => updateQuantity(itemKey, ci.quantity + 1)}
+                          className="p-1 rounded-lg text-emerald-400 hover:bg-emerald-500/20 transition-all"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <span className="text-sm font-black text-emerald-400">৳{itemTotalPrice.toFixed(0)}</span>
+                    </div>
+                  </div>
+
+                  {/* Remove */}
+                  <button
+                    onClick={() => removeFromCart(itemKey)}
+                    className="p-1.5 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-all opacity-0 group-hover:opacity-100 self-start"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
 

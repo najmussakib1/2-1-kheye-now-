@@ -23,8 +23,10 @@ import {
   X,
   Pencil,
   Edit3,
+  Layers,
+  Upload,
 } from 'lucide-react';
-import { FoodItem } from '@/lib/db';
+import { FoodItem, FoodAddon } from '@/lib/db';
 
 const CATEGORIES = [
   'Fast Food',
@@ -130,6 +132,89 @@ export default function RestaurantDashboardPage() {
   const [editImages, setEditImages] = useState<string[]>([]);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // ── Add-On Management Modal State
+  const [activeAddonFoodItem, setActiveAddonFoodItem] = useState<FoodItem | null>(null);
+  const [foodAddons, setFoodAddons] = useState<FoodAddon[]>([]);
+  const [addonsLoading, setAddonsLoading] = useState(false);
+  const [newAddonName, setNewAddonName] = useState('');
+  const [newAddonPrice, setNewAddonPrice] = useState('');
+  const [newAddonImage, setNewAddonImage] = useState('');
+  const [addonSubmitting, setAddonSubmitting] = useState(false);
+  const [addonError, setAddonError] = useState<string | null>(null);
+
+  const openAddonsModal = async (food: FoodItem) => {
+    setActiveAddonFoodItem(food);
+    setAddonError(null);
+    setNewAddonName('');
+    setNewAddonPrice('');
+    setNewAddonImage('');
+    setAddonsLoading(true);
+    try {
+      const res = await fetch(`/api/addons?food_id=${food.id}`);
+      const json = await res.json();
+      if (json.success) {
+        setFoodAddons(json.data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching addons:', err);
+    } finally {
+      setAddonsLoading(false);
+    }
+  };
+
+  const handleCreateAddon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeAddonFoodItem) return;
+    setAddonError(null);
+    setAddonSubmitting(true);
+
+    try {
+      const res = await fetch('/api/addons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          food_id: activeAddonFoodItem.id,
+          name: newAddonName.trim(),
+          price: Number(newAddonPrice),
+          image_url: newAddonImage.trim() || undefined,
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(`Add-on "${newAddonName}" added successfully!`, 'success');
+        setNewAddonName('');
+        setNewAddonPrice('');
+        setNewAddonImage('');
+        // Refresh addons
+        const refreshed = await fetch(`/api/addons?food_id=${activeAddonFoodItem.id}`);
+        const refJson = await refreshed.json();
+        if (refJson.success) setFoodAddons(refJson.data || []);
+      } else {
+        setAddonError(json.error || 'Failed to add addon');
+      }
+    } catch {
+      setAddonError('Failed to create addon');
+    } finally {
+      setAddonSubmitting(false);
+    }
+  };
+
+  const handleDeleteAddon = async (addonId: number, name: string) => {
+    if (!confirm(`Delete add-on "${name}"?`)) return;
+    try {
+      const res = await fetch(`/api/addons/${addonId}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (json.success) {
+        showToast(`Add-on "${name}" deleted`, 'info');
+        setFoodAddons((prev) => prev.filter((a) => a.id !== addonId));
+      } else {
+        showToast(json.error || 'Failed to delete addon', 'error');
+      }
+    } catch {
+      showToast('Error deleting addon', 'error');
+    }
+  };
 
   // Redirect if not logged in as restaurant
   useEffect(() => {
@@ -481,7 +566,17 @@ export default function RestaurantDashboardPage() {
                           )}
                         </button>
 
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1.5">
+                          {/* Manage Add-ons button */}
+                          <button
+                            onClick={() => openAddonsModal(it)}
+                            className="px-2.5 py-1 rounded-xl text-xs font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 hover:border-emerald-400 flex items-center gap-1 transition-all"
+                            title="Manage Add-ons & Extras"
+                          >
+                            <Layers className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Add-ons</span>
+                          </button>
+
                           {/* Edit button */}
                           <button
                             onClick={() => openEditModal(it)}
@@ -723,6 +818,223 @@ export default function RestaurantDashboardPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── ADD-ONS MANAGEMENT MODAL ── */}
+      {activeAddonFoodItem && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-md"
+            onClick={() => setActiveAddonFoodItem(null)}
+          />
+          <div
+            className="relative z-10 w-full max-w-xl max-h-[90vh] flex flex-col rounded-3xl overflow-hidden shadow-2xl border border-emerald-500/30 animate-in fade-in zoom-in-95 duration-200"
+            style={{ background: 'rgba(9, 13, 22, 0.96)', backdropFilter: 'blur(30px)' }}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-emerald-500/20 bg-slate-950/60">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-900 border border-emerald-500/30 flex-shrink-0">
+                  {activeAddonFoodItem.image_url ? (
+                    <img src={activeAddonFoodItem.image_url} alt={activeAddonFoodItem.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Utensils className="w-5 h-5 text-emerald-400 m-2.5" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white leading-tight">
+                    Add-ons for {activeAddonFoodItem.name}
+                  </h3>
+                  <p className="text-[11px] text-emerald-400 font-semibold">
+                    Base: ৳{activeAddonFoodItem.sale_price} • {foodAddons.length} addon{foodAddons.length !== 1 ? 's' : ''} available
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveAddonFoodItem(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              
+              {/* Existing Add-ons List */}
+              <div>
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3 flex items-center justify-between">
+                  <span>Configured Add-ons</span>
+                  <span className="text-[10px] text-emerald-400 lowercase font-normal">Customer selectable</span>
+                </h4>
+
+                {addonsLoading ? (
+                  <div className="py-6 text-center text-xs text-slate-400">Loading add-ons...</div>
+                ) : foodAddons.length === 0 ? (
+                  <div className="p-4 rounded-2xl bg-slate-950/60 border border-dashed border-emerald-500/20 text-center text-xs text-slate-400">
+                    No add-ons configured yet for this food item. Add the first one below!
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                    {foodAddons.map((ad) => (
+                      <div
+                        key={ad.id}
+                        className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-900/80 border border-emerald-500/20 hover:border-emerald-500/40 transition-all"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-11 h-11 rounded-xl overflow-hidden bg-slate-950 border border-emerald-500/30 flex-shrink-0">
+                            {ad.image_url ? (
+                              <img src={ad.image_url} alt={ad.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-emerald-400">
+                                +৳
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-white">{ad.name}</p>
+                            <p className="text-xs font-extrabold text-emerald-400">+৳{ad.price}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            Active
+                          </span>
+                          <button
+                            onClick={() => handleDeleteAddon(ad.id, ad.name)}
+                            className="p-1.5 rounded-xl text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                            title="Delete addon"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Form to Add New Add-on with Picture */}
+              <div className="pt-4 border-t border-emerald-500/20">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                    <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                    Add New Add-on with Picture
+                  </h4>
+                </div>
+
+                {addonError && (
+                  <div className="mb-3 p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <span>{addonError}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleCreateAddon} className="space-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <div className="sm:col-span-7 space-y-1">
+                      <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                        Add-on Name *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Extra Melted Cheese"
+                        value={newAddonName}
+                        onChange={(e) => setNewAddonName(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-emerald-500/20 focus:border-emerald-400 text-xs text-white placeholder-slate-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-5 space-y-1">
+                      <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                        Add-on Price (৳) *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        required
+                        placeholder="e.g. 40"
+                        value={newAddonPrice}
+                        onChange={(e) => setNewAddonPrice(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-emerald-500/20 focus:border-emerald-400 text-xs text-white placeholder-slate-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Add-on Picture Upload or URL */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between">
+                      <span>Add-on Picture (Photo)</span>
+                      <span className="text-[10px] text-emerald-400 font-normal">File upload or URL</span>
+                    </label>
+
+                    <div className="flex items-center gap-3">
+                      {/* Photo Preview */}
+                      <div className="w-14 h-14 rounded-xl overflow-hidden bg-slate-950 border border-emerald-500/30 flex items-center justify-center flex-shrink-0">
+                        {newAddonImage ? (
+                          <img src={newAddonImage} alt="Addon Preview" className="w-full h-full object-cover" />
+                        ) : (
+                          <ImageIcon className="w-5 h-5 text-slate-600" />
+                        )}
+                      </div>
+
+                      <div className="flex-1 space-y-2">
+                        {/* File Upload Input */}
+                        <label className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950 border border-emerald-500/25 cursor-pointer hover:border-emerald-400 text-xs text-emerald-300 w-full">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{newAddonImage ? 'Change Photo' : 'Upload Add-on Photo'}</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              if (file.size > 2 * 1024 * 1024) {
+                                alert('Image must be under 2 MB.');
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                if (typeof reader.result === 'string') {
+                                  setNewAddonImage(reader.result);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
+
+                        {/* Optional Direct URL */}
+                        <input
+                          type="url"
+                          placeholder="Or paste image URL (https://...)"
+                          value={newAddonImage.startsWith('data:') ? '' : newAddonImage}
+                          onChange={(e) => setNewAddonImage(e.target.value)}
+                          className="w-full px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={addonSubmitting}
+                    className="w-full py-2.5 rounded-xl font-bold text-xs bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 hover:from-emerald-400 hover:to-teal-300 transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50"
+                  >
+                    {addonSubmitting ? 'Adding Add-on...' : '+ Save New Add-on'}
+                  </button>
+                </form>
+              </div>
+
+            </div>
           </div>
         </div>
       )}
