@@ -29,8 +29,10 @@ import {
   ArrowRight,
   Utensils,
   Check,
+  Compass,
 } from 'lucide-react';
-import { SafeRider } from '@/lib/db';
+import type { SafeRider } from '@/lib/db';
+import { DELIVERY_LOCATIONS } from '@/lib/constants';
 import Toast from '@/components/Toast';
 
 export default function RiderPortalPage() {
@@ -68,6 +70,7 @@ export default function RiderPortalPage() {
   const [editVehicleType, setEditVehicleType] = useState('Motorcycle');
   const [editVehicleNumber, setEditVehicleNumber] = useState('');
   const [editAddress, setEditAddress] = useState('');
+  const [editLocation, setEditLocation] = useState('Dhanmondi');
   const [editAvatarUrl, setEditAvatarUrl] = useState('');
   const [updatingProfile, setUpdatingProfile] = useState(false);
 
@@ -205,6 +208,26 @@ export default function RiderPortalPage() {
     }
   };
 
+  // Handle Direct Location Change (triggers order assignment if available)
+  const handleLocationChange = async (newLocation: string) => {
+    if (!rider) return;
+    try {
+      const res = await fetch('/api/rider/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location: newLocation }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRider({ ...rider, location: newLocation });
+        showToast(`Delivery zone updated to ${newLocation}!`);
+        await fetchRiderData();
+      }
+    } catch {
+      showToast('Could not update delivery zone', 'error');
+    }
+  };
+
   // Handle Profile Update
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -220,6 +243,7 @@ export default function RiderPortalPage() {
           vehicle_type: editVehicleType,
           vehicle_number: editVehicleNumber,
           address: editAddress,
+          location: editLocation,
           avatar_url: editAvatarUrl,
         }),
       });
@@ -228,6 +252,7 @@ export default function RiderPortalPage() {
         setRider(data.rider);
         setIsEditModalOpen(false);
         showToast('Profile updated successfully');
+        await fetchRiderData();
       }
     } catch {
       showToast('Failed to update profile', 'error');
@@ -611,6 +636,11 @@ export default function RiderPortalPage() {
                         <Bike className="w-3.5 h-3.5 text-emerald-400" />
                         {rider.vehicle_type} ({rider.vehicle_number || 'Registered'})
                       </span>
+                      <span>•</span>
+                      <span className="flex items-center gap-1 text-emerald-300 font-medium">
+                        <Compass className="w-3.5 h-3.5 text-emerald-400" />
+                        Active Zone: {rider.location || 'Dhanmondi'}
+                      </span>
                       {rider.address && (
                         <>
                           <span>•</span>
@@ -624,8 +654,24 @@ export default function RiderPortalPage() {
                   </div>
                 </div>
 
-                {/* Status Toggle & Edit Profile Actions */}
+                {/* Status Toggle, Zone Selector & Edit Profile Actions */}
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+                  {/* Location Selector */}
+                  <div className="flex items-center bg-slate-950 rounded-2xl px-3 py-1.5 border border-emerald-500/30 gap-1.5">
+                    <Compass className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                    <select
+                      value={rider.location || 'Dhanmondi'}
+                      onChange={(e) => handleLocationChange(e.target.value)}
+                      className="bg-transparent text-xs font-bold text-white focus:outline-none cursor-pointer"
+                    >
+                      {DELIVERY_LOCATIONS.map((loc) => (
+                        <option key={loc} value={loc} className="bg-slate-900 text-white">
+                          {loc}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   {/* Status Dropdown / Toggle */}
                   <div className="flex items-center bg-slate-950 rounded-2xl p-1 border border-emerald-500/30">
                     {(['Available', 'On Delivery', 'Offline'] as const).map((st) => (
@@ -653,6 +699,7 @@ export default function RiderPortalPage() {
                       setEditVehicleType(rider.vehicle_type || 'Motorcycle');
                       setEditVehicleNumber(rider.vehicle_number || '');
                       setEditAddress(rider.address || '');
+                      setEditLocation(rider.location || 'Dhanmondi');
                       setEditAvatarUrl(rider.avatar_url || '');
                       setIsEditModalOpen(true);
                     }}
@@ -958,7 +1005,22 @@ export default function RiderPortalPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Address / Zone</label>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Delivery Zone / Location</label>
+                <select
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-emerald-500/20 focus:border-emerald-400 text-sm text-white focus:outline-none"
+                >
+                  {DELIVERY_LOCATIONS.map((loc) => (
+                    <option key={loc} value={loc}>
+                      {loc}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Address</label>
                 <input
                   type="text"
                   value={editAddress}

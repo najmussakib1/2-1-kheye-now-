@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useState, useEffect } from 'react';
-import { FoodItem } from '@/lib/db';
+import type { FoodItem } from '@/lib/db';
 import ProductCard from './ProductCard';
 import { ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 

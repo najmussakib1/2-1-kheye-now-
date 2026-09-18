@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react';
-import { FoodItem, SafeRestaurant, FoodAddon } from '@/lib/db';
+import type { FoodItem, SafeRestaurant, FoodAddon } from '@/lib/db';
 
 // ---- Cart Types ----
 export interface CartItem {

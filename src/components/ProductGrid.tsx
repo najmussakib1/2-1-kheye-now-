@@ -1,26 +1,31 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { FoodItem } from '@/lib/db';
+import React, { useState, useEffect, useCallback } from 'react';
+import type { FoodItem } from '@/lib/db';
 import ProductCard from './ProductCard';
-import { Search, Utensils, Sparkles, Filter, Store } from 'lucide-react';
+import { Search, Utensils, Sparkles, Filter, Store, Star } from 'lucide-react';
 
 interface Restaurant {
   id: number;
   name: string;
   image_url: string | null;
+  rating?: number;
+  categories?: string;
+  address?: string;
 }
 
 interface ProductGridProps {
   selectedCategory: string;
   onSelectCategory: (cat: string) => void;
   onAddToCart: (item: FoodItem) => void;
+  refreshTrigger?: number;
 }
 
 export default function ProductGrid({
   selectedCategory,
   onSelectCategory,
   onAddToCart,
+  refreshTrigger,
 }: ProductGridProps) {
   const [items, setItems] = useState<FoodItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +36,7 @@ export default function ProductGrid({
   const categories = ['All', 'Burgers', 'Pizza', 'Desi Feast', 'Pasta', 'Beverages', 'Juice', 'Desserts'];
 
   // Fetch restaurants for filter pills
-  useEffect(() => {
+  const fetchRestaurants = useCallback(() => {
     fetch('/api/restaurants')
       .then((r) => r.json())
       .then((json) => {
@@ -39,6 +44,10 @@ export default function ProductGrid({
       })
       .catch(console.error);
   }, []);
+
+  useEffect(() => {
+    fetchRestaurants();
+  }, [fetchRestaurants, refreshTrigger]);
 
   const fetchItems = async (category: string, restaurantId: number | null, search: string) => {
     setLoading(true);
@@ -61,11 +70,11 @@ export default function ProductGrid({
     }
   };
 
-  // Fetch when category or restaurant filter changes
+  // Fetch when category or restaurant filter changes or ratings updated
   useEffect(() => {
     fetchItems(selectedCategory, selectedRestaurantId, searchQuery);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCategory, selectedRestaurantId]);
+  }, [selectedCategory, selectedRestaurantId, refreshTrigger]);
 
   // Client-side search filter (instant, no API call) — API-side search is also available
   const filteredItems = searchQuery.trim()
@@ -154,7 +163,7 @@ export default function ProductGrid({
             <button
               key={r.id}
               onClick={() => setSelectedRestaurantId(r.id)}
-              className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all duration-300 flex items-center gap-1.5 ${
+              className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all duration-300 flex items-center gap-2 ${
                 selectedRestaurantId === r.id
                   ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.4)] scale-105'
                   : 'bg-slate-900/60 border border-emerald-500/20 text-emerald-300/80 hover:border-emerald-400/60 hover:text-white'
@@ -163,11 +172,67 @@ export default function ProductGrid({
               {r.image_url && (
                 <img src={r.image_url} alt={r.name} className="w-4 h-4 rounded-full object-cover" />
               )}
-              {r.name}
+              <span>{r.name}</span>
+              <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-black ${
+                selectedRestaurantId === r.id ? 'bg-slate-950/20 text-slate-950' : 'bg-amber-400/15 text-amber-300'
+              }`}>
+                <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                <span>{Number(r.rating || 4.8).toFixed(1)}</span>
+              </span>
             </button>
           ))}
         </div>
       )}
+
+      {/* Selected Restaurant Rating Showcase Banner */}
+      {selectedRestaurantId && (() => {
+        const selectedRestaurant = restaurants.find((r) => r.id === selectedRestaurantId);
+        if (!selectedRestaurant) return null;
+        return (
+          <div className="mb-8 p-4 sm:p-5 rounded-3xl bg-slate-900/70 border border-emerald-500/30 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2 duration-300 shadow-xl">
+            <div className="flex items-center gap-3.5">
+              {selectedRestaurant.image_url ? (
+                <img
+                  src={selectedRestaurant.image_url}
+                  alt={selectedRestaurant.name}
+                  className="w-14 h-14 rounded-2xl object-cover border border-emerald-500/30 shadow-md"
+                />
+              ) : (
+                <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                  <Store className="w-7 h-7 text-emerald-400" />
+                </div>
+              )}
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xl font-black text-white">{selectedRestaurant.name}</h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                    Partner Restaurant
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {selectedRestaurant.categories || 'Fast Food, Drinks & Snacks'}
+                </p>
+                {selectedRestaurant.address && (
+                  <p className="text-[11px] text-slate-500 mt-0.5">{selectedRestaurant.address}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 bg-slate-950/80 p-3 rounded-2xl border border-emerald-500/25 sm:self-center">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-400/40 text-amber-300">
+                <Star className="w-5 h-5 fill-amber-400 text-amber-400" />
+                <span className="text-xl font-black text-white">
+                  {Number(selectedRestaurant.rating || 4.8).toFixed(1)}
+                </span>
+              </div>
+              <div className="text-left pr-2">
+                <p className="text-xs font-bold text-white">Restaurant Rating</p>
+                <p className="text-[10px] text-emerald-300">Average of all menu foods</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Products Grid */}
       {loading ? (

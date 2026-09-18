@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import crypto from 'crypto';
 
 export interface FoodItem {
   id: number;
@@ -9,6 +10,7 @@ export interface FoodItem {
   base_price: number;
   sale_price: number;
   is_available: number | boolean;
+  stock?: number;
   category: string;
   rating: number;
   image_url: string;
@@ -17,6 +19,7 @@ export interface FoodItem {
   created_at?: string;
   restaurant_name?: string;
   restaurant_logo?: string;
+  restaurant_rating?: number;
 }
 
 export interface User {
@@ -44,6 +47,7 @@ export interface Restaurant {
   categories: string;
   image_url?: string;
   rating: number;
+  total_earnings?: number;
   password_hash: string;
   created_at?: string;
 }
@@ -63,6 +67,7 @@ export interface Rider {
   address?: string;
   avatar_url?: string;
   status: string; // 'Available' | 'On Delivery' | 'Offline'
+  location?: string; // Delivery zone e.g. 'Dhanmondi'
   total_deliveries: number;
   rating: number;
   earnings: number;
@@ -131,6 +136,7 @@ export interface CreateOrderInput {
   customer_name: string;
   phone_number: string;
   delivery_address: string;
+  delivery_location?: string;
   total_amount: number;
   payment_method?: string;
   order_notes?: string;
@@ -141,16 +147,82 @@ export interface OrderRecord {
   id: number;
   user_id: number | null;
   rider_id?: number | null;
+  restaurant_id?: number | null;
   customer_name: string;
   phone_number: string;
   delivery_address: string;
+  delivery_location?: string;
   total_amount: number;
   payment_method: string;
   order_notes?: string;
   status: string;
+  is_rated?: boolean | number;
+  needs_rating?: boolean | number;
   created_at: string;
   items?: OrderItemInput[];
 }
+
+// ---- Rating Types ----
+export interface FoodRatingRecord {
+  id: number;
+  order_id: number;
+  food_id: number;
+  restaurant_id: number;
+  user_id?: number | null;
+  rating: number;
+  review_text?: string | null;
+  created_at?: string;
+}
+
+export interface OrderFoodRatingInput {
+  food_id: number;
+  rating: number;
+  review_text?: string;
+}
+
+export interface SubmitOrderRatingsResult {
+  orderId: number;
+  restaurantId: number;
+  restaurantName: string;
+  previousRestaurantRating: number;
+  newRestaurantRating: number;
+  updatedFoods: {
+    foodId: number;
+    foodName: string;
+    newRating: number;
+  }[];
+}
+
+export interface PendingRatingOrderItem {
+  id: number;
+  order_id: number;
+  food_id: number;
+  food_name: string;
+  price: number;
+  quantity: number;
+  image_url?: string;
+  current_food_rating?: number;
+}
+
+export interface PendingRatingOrder {
+  id: number;
+  user_id: number | null;
+  rider_id: number | null;
+  customer_name: string;
+  phone_number: string;
+  delivery_address: string;
+  total_amount: number;
+  status: string;
+  is_rated: number;
+  created_at: string;
+  restaurant_id: number;
+  restaurant_name: string;
+  restaurant_logo?: string;
+  restaurant_rating: number;
+  items: PendingRatingOrderItem[];
+}
+
+export * from './constants';
 
 const DB_PATH = path.join(process.cwd(), 'kheye_now.db');
 
@@ -330,6 +402,24 @@ export function getDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_wishlist_items_wishlist_id ON wishlist_items(wishlist_id);
     CREATE INDEX IF NOT EXISTS idx_wishlist_items_food_id ON wishlist_items(food_id);
+
+    CREATE TABLE IF NOT EXISTS food_ratings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL,
+        food_id INTEGER NOT NULL,
+        restaurant_id INTEGER NOT NULL,
+        user_id INTEGER,
+        rating DECIMAL(3, 2) NOT NULL,
+        review_text TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (food_id) REFERENCES food_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_food_ratings_order_id ON food_ratings(order_id);
+    CREATE INDEX IF NOT EXISTS idx_food_ratings_food_id ON food_ratings(food_id);
+    CREATE INDEX IF NOT EXISTS idx_food_ratings_restaurant_id ON food_ratings(restaurant_id);
   `);
   
   // Graceful column additions for existing sqlite database
@@ -337,6 +427,319 @@ export function getDb() {
     db.exec(`ALTER TABLE orders ADD COLUMN rider_id INTEGER REFERENCES riders(id) ON DELETE SET NULL;`);
   } catch {
     // column might already exist
+  }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN is_rated BOOLEAN DEFAULT 0;`);
+  } catch {
+    // column might already exist
+  }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN delivery_location VARCHAR(100) DEFAULT 'Dhanmondi';`);
+  } catch {
+    // column might already exist
+  }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN needs_rating BOOLEAN DEFAULT 0;`);
+  } catch {
+    // column might already exist
+  }
+  try {
+    db.exec(`ALTER TABLE riders ADD COLUMN location VARCHAR(100) DEFAULT 'Dhanmondi';`);
+  } catch {
+    // column might already exist
+  }
+  try {
+    db.exec(`ALTER TABLE orders ADD COLUMN restaurant_id INTEGER REFERENCES restaurants(id) ON DELETE SET NULL;`);
+  } catch {
+    // column might already exist
+  }
+  try {
+    db.exec(`ALTER TABLE food_items ADD COLUMN stock INTEGER DEFAULT 50;`);
+  } catch {
+    // column might already exist
+  }
+
+  // Create customer_rating_prompts table if not exists
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS customer_rating_prompts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL UNIQUE,
+        user_id INTEGER,
+        status VARCHAR(50) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      );
+    `);
+  } catch {
+    // ignore
+  }
+
+  // Trigger 1: Stock reduction on order items insert & auto stock-out
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trigger_reduce_stock_on_order_item
+      AFTER INSERT ON order_items
+      BEGIN
+        UPDATE food_items
+        SET stock = MAX(0, COALESCE(stock, 0) - NEW.quantity),
+            is_available = CASE WHEN (COALESCE(stock, 0) - NEW.quantity) <= 0 THEN 0 ELSE is_available END
+        WHERE id = NEW.food_id;
+      END;
+    `);
+  } catch {
+    // ignore
+  }
+
+  // Trigger 2: When a rider becomes Available, assign any prepared orders waiting for rider
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trigger_assign_orders_when_rider_available
+      AFTER UPDATE OF status, location ON riders
+      WHEN NEW.status = 'Available'
+      BEGIN
+        UPDATE orders SET
+          rider_id = NEW.id
+        WHERE status = 'Prepared'
+          AND delivery_location = NEW.location
+          AND rider_id IS NULL;
+      END;
+    `);
+  } catch {
+    // ignore - trigger already exists
+  }
+
+  // Trigger 3: After food rating inserted, update food rating, restaurant rating, mark order rated, close prompt
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trigger_update_ratings_on_review
+      AFTER INSERT ON food_ratings
+      BEGIN
+        UPDATE food_items
+        SET rating = (
+          SELECT ROUND(AVG(rating), 2) FROM food_ratings WHERE food_id = NEW.food_id
+        )
+        WHERE id = NEW.food_id;
+
+        UPDATE restaurants
+        SET rating = (
+          SELECT ROUND(AVG(fi.rating), 2)
+          FROM food_items fi
+          WHERE fi.restaurant_id = NEW.restaurant_id
+            AND fi.rating IS NOT NULL AND fi.rating > 0
+        )
+        WHERE id = NEW.restaurant_id;
+
+        UPDATE orders
+        SET is_rated = CASE
+          WHEN (SELECT COUNT(*) FROM order_items WHERE order_id = NEW.order_id) =
+               (SELECT COUNT(*) FROM food_ratings WHERE order_id = NEW.order_id)
+          THEN 1 ELSE is_rated
+        END,
+        needs_rating = CASE
+          WHEN (SELECT COUNT(*) FROM order_items WHERE order_id = NEW.order_id) =
+               (SELECT COUNT(*) FROM food_ratings WHERE order_id = NEW.order_id)
+          THEN 0 ELSE needs_rating
+        END
+        WHERE id = NEW.order_id;
+
+        UPDATE customer_rating_prompts
+        SET status = 'completed'
+        WHERE order_id = NEW.order_id
+          AND (SELECT COUNT(*) FROM order_items WHERE order_id = NEW.order_id) =
+              (SELECT COUNT(*) FROM food_ratings WHERE order_id = NEW.order_id);
+      END;
+    `);
+  } catch {
+    // ignore - trigger already exists
+  }
+
+  // Trigger 4: When order status changes to Delivered, set needs_rating=1 and insert prompt
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trigger_prompt_rating_on_delivery
+      AFTER UPDATE OF status ON orders
+      WHEN NEW.status = 'Delivered' AND OLD.status != 'Delivered'
+      BEGIN
+        UPDATE orders SET needs_rating = 1 WHERE id = NEW.id;
+        INSERT OR IGNORE INTO customer_rating_prompts (order_id, user_id, status)
+        VALUES (NEW.id, NEW.user_id, 'pending');
+      END;
+    `);
+  } catch {
+    // ignore - trigger already exists
+  }
+
+  // Add total_earnings column to restaurants if not exists
+  try {
+    db.exec(`ALTER TABLE restaurants ADD COLUMN total_earnings REAL DEFAULT 0;`);
+  } catch {
+    // column might already exist
+  }
+
+  // Trigger 5: Assign rider when order is prepared by restaurant
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trigger_assign_order_on_prepared
+      AFTER UPDATE OF status ON orders
+      WHEN NEW.status = 'Prepared' AND OLD.status != 'Prepared' AND NEW.rider_id IS NULL
+      BEGIN
+        UPDATE orders SET
+          rider_id = (
+            SELECT r.id FROM riders r
+            WHERE r.status = 'Available' AND r.location = NEW.delivery_location
+            ORDER BY (
+              SELECT COUNT(*) FROM orders o2 WHERE o2.rider_id = r.id AND o2.status IN ('Prepared','On the Way')
+            ) ASC,
+            r.total_deliveries ASC,
+            r.id ASC
+            LIMIT 1
+          )
+        WHERE id = NEW.id;
+      END;
+    `);
+  } catch { }
+
+  // Trigger 6: Update earnings on delivery
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trigger_update_earnings_on_delivery
+      AFTER UPDATE OF status ON orders
+      WHEN NEW.status = 'Delivered' AND OLD.status != 'Delivered'
+      BEGIN
+        UPDATE riders
+        SET earnings = earnings + (NEW.total_amount * 0.80)
+        WHERE id = NEW.rider_id;
+        UPDATE restaurants
+        SET total_earnings = total_earnings + (NEW.total_amount * 0.20)
+        WHERE id = NEW.restaurant_id;
+      END;
+    `);
+  } catch { }
+
+  // Seed default restaurant and food items if DB is empty
+  try {
+    const count = db.prepare('SELECT COUNT(*) as cnt FROM restaurants').get() as any;
+    if (count.cnt === 0) {
+      // Generate scrypt password hash compatible with verifyPassword in auth.ts
+      const salt = crypto.randomBytes(16).toString('hex');
+      const derivedKey = crypto.scryptSync('123456', salt, 64);
+      const hash = `${salt}:${derivedKey.toString('hex')}`;
+
+      db.exec(`
+        INSERT INTO restaurants (id, name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, password_hash)
+        VALUES (1, 'basic_restaurant', 'Main Kitchen Master', 'basic_restaurant@kheyenow.com', '01700000000', 'Dhanmondi 27, Dhaka', NULL, 'Fast Food, Juice, Desi Feast, Burgers, Pizza, Pasta, Desserts, Beverages', 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&auto=format&fit=crop&q=80', '${hash}');
+      `);
+
+      const restId = 1;
+
+      const foods = [
+        {
+          name: 'Royal Kacchi Biryani',
+          desc: 'Authentic Dhaka style fragrant Basmati rice with tender mutton, potatoes, and signature spices.',
+          base: 450,
+          sale: 380,
+          cat: 'Desi Feast',
+          img: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Chittagong Beef Kala Bhuna',
+          desc: 'Traditional slow-cooked dark caramelized tender beef cooked with heritage spices & mustard oil.',
+          base: 480,
+          sale: 420,
+          cat: 'Desi Feast',
+          img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Special Beef Tehari',
+          desc: 'Mustard oil cooked tender beef chunks cooked with aromatic short-grain rice & green chillies.',
+          base: 320,
+          sale: 280,
+          cat: 'Desi Feast',
+          img: 'https://images.unsplash.com/photo-1633945274405-b6c8069047b0?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Smokey BBQ Smash Burger',
+          desc: 'Double juicy beef patties, melted cheddar, crispy bacon, caramelized onions & secret BBQ sauce.',
+          base: 350,
+          sale: 299,
+          cat: 'Burgers',
+          img: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Crispy Naga Chicken Burger',
+          desc: 'Super spicy naga pepper glazed fried chicken thigh patty, jalapenos, melted cheese & mayo.',
+          base: 310,
+          sale: 260,
+          cat: 'Burgers',
+          img: 'https://images.unsplash.com/photo-1625813506062-0aeb1d7a094b?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Truffle Mushroom Pizza',
+          desc: 'Hand-tossed sourdough pizza topped with wild mushrooms, truffle oil, mozzarella & fresh basil.',
+          base: 650,
+          sale: 549,
+          cat: 'Pizza',
+          img: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Ultimate Pepperoni Feast Pizza',
+          desc: 'Loaded with double pepperoni, mozzarella, parmesan and house marinara sauce.',
+          base: 690,
+          sale: 599,
+          cat: 'Pizza',
+          img: 'https://images.unsplash.com/photo-1628840042765-356cda07504e?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Creamy Alfredo Chicken Pasta',
+          desc: 'Fettuccine in rich garlic parmesan cream sauce with grilled chicken breast and herbs.',
+          base: 420,
+          sale: 360,
+          cat: 'Pasta',
+          img: 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Molten Lava Chocolate Cake',
+          desc: 'Warm chocolate cake with a molten chocolate center served with vanilla bean ice cream.',
+          base: 250,
+          sale: 199,
+          cat: 'Desserts',
+          img: 'https://images.unsplash.com/photo-1606313564200-e75d5e30476c?w=800&auto=format&fit=crop&q=80'
+        },
+        {
+          name: 'Mango Passionfruit Smoothie',
+          desc: 'Refreshing blended fresh mango, passionfruit pulp, Greek yogurt and honey.',
+          base: 180,
+          sale: 149,
+          cat: 'Juice',
+          img: 'https://images.unsplash.com/photo-1553530666-ba11a7da3888?w=800&auto=format&fit=crop&q=80'
+        },
+      ];
+
+      const insertFood = db.prepare(`
+        INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, images_json, is_available)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+      `);
+
+      for (const f of foods) {
+        insertFood.run(restId, f.name, f.desc, f.base, f.sale, f.cat, f.img, JSON.stringify([f.img]));
+      }
+
+      // Also seed an available Rider for deliveries
+      try {
+        db.prepare(`
+          INSERT OR IGNORE INTO riders (
+            id, full_name, phone_number, email, vehicle_type, vehicle_number, driving_license, nid_number, address, location, avatar_url, status, total_deliveries, rating, earnings, password_hash
+          ) VALUES (
+            1, 'Rahim Ahmed', '01800000000', 'rider@kheyenow.com', 'Motorcycle', 'Dhaka Metro-HA-11-2233', 'DL-882391024', '19962691234567890', 'Mirpur 10, Dhaka', 'Dhanmondi', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80', 'Available', 142, 4.95, 14250.00, '${hash}'
+          )
+        `).run();
+      } catch {}
+    }
+  } catch (e) {
+    // seeding is optional, don't block init
+    console.error('Seed error:', e);
   }
 
   return db;
@@ -357,8 +760,14 @@ function formatFoodItem(row: any): FoodItem {
   if (images.length === 0 && row.image_url) {
     images = [row.image_url];
   }
+  const stock = row.stock !== undefined && row.stock !== null ? Number(row.stock) : 50;
+  // If stock is 0 or less, ensure is_available reflects stock-out
+  const is_available = stock <= 0 ? 0 : (row.is_available ? 1 : 0);
+
   return {
     ...row,
+    stock,
+    is_available,
     images,
     images_json: row.images_json || JSON.stringify(images),
   };
@@ -369,7 +778,7 @@ export function getFoodItemsFromDb(category?: string, restaurantId?: number, sea
   const db = getDb();
   try {
     let query = `
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE 1=1
@@ -405,7 +814,7 @@ export function getFoodItemByIdFromDb(id: number): FoodItem | null {
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE f.id = ?
@@ -422,7 +831,7 @@ export function getSimilarFoodItemsFromDb(currentId: number, category: string, l
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE f.id != ? AND (f.category = ? OR 1=1)
@@ -436,7 +845,7 @@ export function getSimilarFoodItemsFromDb(currentId: number, category: string, l
   }
 }
 
-// Add a new food item for a restaurant (supports multiple images)
+// Add a new food item for a restaurant (supports multiple images and stock)
 export function createFoodItemInDb(item: {
   restaurant_id: number;
   name: string;
@@ -448,6 +857,7 @@ export function createFoodItemInDb(item: {
   images?: string[];
   images_json?: string;
   is_available?: boolean | number;
+  stock?: number;
 }): FoodItem {
   const db = getDb();
   try {
@@ -456,10 +866,12 @@ export function createFoodItemInDb(item: {
       : item.image_url ? [item.image_url] : [];
     const imagesJson = item.images_json || JSON.stringify(imagesList);
     const coverImage = imagesList[0] || item.image_url || '';
+    const initialStock = item.stock !== undefined ? Number(item.stock) : 50;
+    const isAvailable = initialStock <= 0 ? 0 : (item.is_available !== undefined ? (item.is_available ? 1 : 0) : 1);
 
     const stmt = db.prepare(`
-      INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, images_json, is_available)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, images_json, is_available, stock)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const info = stmt.run(
       item.restaurant_id,
@@ -470,7 +882,8 @@ export function createFoodItemInDb(item: {
       item.category || 'Fast Food',
       coverImage || null,
       imagesJson,
-      item.is_available !== undefined ? (item.is_available ? 1 : 0) : 1
+      isAvailable,
+      initialStock
     );
 
     return {
@@ -484,7 +897,8 @@ export function createFoodItemInDb(item: {
       image_url: coverImage,
       images: imagesList,
       images_json: imagesJson,
-      is_available: item.is_available !== undefined ? Boolean(item.is_available) : true,
+      is_available: Boolean(isAvailable),
+      stock: initialStock,
       rating: 4.8,
     };
   } finally {
@@ -492,7 +906,7 @@ export function createFoodItemInDb(item: {
   }
 }
 
-// Update food item in DB (supports editing all details and multiple images)
+// Update food item in DB (supports editing all details, multiple images, and stock)
 export function updateFoodItemInDb(
   itemId: number,
   restaurantId: number,
@@ -506,6 +920,7 @@ export function updateFoodItemInDb(
     images?: string[];
     images_json?: string;
     is_available?: boolean | number;
+    stock?: number;
   }
 ): FoodItem | null {
   const db = getDb();
@@ -543,14 +958,23 @@ export function updateFoodItemInDb(
     const base_price = updates.base_price !== undefined ? updates.base_price : current.base_price;
     const sale_price = updates.sale_price !== undefined ? updates.sale_price : current.sale_price;
     const category = updates.category !== undefined ? updates.category.trim() : current.category;
-    const is_available = updates.is_available !== undefined ? (updates.is_available ? 1 : 0) : current.is_available;
+    const stock = updates.stock !== undefined ? Number(updates.stock) : (current.stock !== undefined && current.stock !== null ? Number(current.stock) : 50);
+    // If stock is 0 or less, auto-set is_available to 0
+    let is_available: number;
+    if (stock <= 0) {
+      is_available = 0;
+    } else if (updates.is_available !== undefined) {
+      is_available = updates.is_available ? 1 : 0;
+    } else {
+      is_available = current.is_available ? 1 : 0;
+    }
 
     const stmt = db.prepare(`
       UPDATE food_items
-      SET name = ?, description = ?, base_price = ?, sale_price = ?, category = ?, image_url = ?, images_json = ?, is_available = ?
+      SET name = ?, description = ?, base_price = ?, sale_price = ?, category = ?, image_url = ?, images_json = ?, is_available = ?, stock = ?
       WHERE id = ? AND restaurant_id = ?
     `);
-    stmt.run(name, description, base_price, sale_price, category, coverImage, imagesJson, is_available, itemId, restaurantId);
+    stmt.run(name, description, base_price, sale_price, category, coverImage, imagesJson, is_available, stock, itemId, restaurantId);
 
     return getFoodItemByIdFromDb(itemId);
   } finally {
@@ -859,21 +1283,54 @@ export function getAllRestaurantsFromDb(): SafeRestaurant[] {
 // ORDERS DATABASE QUERIES (SQL Prepared Statements & Transactions)
 // ============================================================
 
+// Check stock for all items before placing an order. Returns null if OK, or an error string if any item is out of stock.
+export function checkStockForOrderItems(items: { food_id?: number; quantity: number }[]): string | null {
+  const db = getDb();
+  try {
+    for (const item of items) {
+      if (!item.food_id) continue;
+      const food = db.prepare('SELECT name, stock, is_available FROM food_items WHERE id = ?').get(item.food_id) as any;
+      if (!food) continue;
+      if (!food.is_available || (food.stock !== null && food.stock !== undefined && Number(food.stock) <= 0)) {
+        return `"${food.name}" is out of stock and cannot be ordered.`;
+      }
+      if (food.stock !== null && food.stock !== undefined && Number(food.stock) < item.quantity) {
+        return `"${food.name}" only has ${food.stock} left in stock, but you requested ${item.quantity}.`;
+      }
+    }
+    return null;
+  } finally {
+    db.close();
+  }
+}
+
 export function createOrderInDb(input: CreateOrderInput): { orderId: number } {
   const db = getDb();
   try {
     const insertOrderTx = db.transaction(() => {
+      // Derive restaurant_id from the first food item in the order
+      let restaurantId: number | null = null;
+      if (input.items && input.items.length > 0) {
+        const firstFoodId = input.items[0].food_id;
+        if (firstFoodId) {
+          const food = db.prepare('SELECT restaurant_id FROM food_items WHERE id = ?').get(firstFoodId) as any;
+          if (food) restaurantId = food.restaurant_id;
+        }
+      }
+
       const orderStmt = db.prepare(`
-        INSERT INTO orders (user_id, rider_id, customer_name, phone_number, delivery_address, total_amount, payment_method, order_notes, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Confirmed')
+        INSERT INTO orders (user_id, rider_id, restaurant_id, customer_name, phone_number, delivery_address, delivery_location, total_amount, payment_method, order_notes, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Preparing')
       `);
       
       const orderResult = orderStmt.run(
         input.user_id || null,
         input.rider_id || null,
+        restaurantId,
         input.customer_name.trim(),
         input.phone_number.trim(),
         input.delivery_address.trim(),
+        input.delivery_location || 'Dhanmondi',
         input.total_amount,
         input.payment_method || 'Cash on Delivery',
         input.order_notes?.trim() || null
@@ -948,6 +1405,42 @@ export function getOrderByIdFromDb(orderId: number): any | null {
     }
     order.items = items;
     return order;
+  } finally {
+    db.close();
+  }
+}
+
+// Get all orders for a specific restaurant, with items and rider info
+export function getOrdersByRestaurantIdFromDb(restaurantId: number): any[] {
+  const db = getDb();
+  try {
+    const orders = db.prepare(`
+      SELECT o.*, r.full_name as rider_name, r.phone_number as rider_phone
+      FROM orders o
+      LEFT JOIN riders r ON o.rider_id = r.id
+      WHERE o.restaurant_id = ?
+      ORDER BY o.created_at DESC
+    `).all(restaurantId) as any[];
+
+    for (const order of orders) {
+      const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id) as any[];
+      order.items = items;
+    }
+    return orders;
+  } finally {
+    db.close();
+  }
+}
+
+// Update order status by restaurant (e.g. Preparing -> Prepared)
+export function updateOrderStatusByRestaurantInDb(orderId: number, restaurantId: number, status: string): boolean {
+  const db = getDb();
+  try {
+    const stmt = db.prepare(`
+      UPDATE orders SET status = ? WHERE id = ? AND restaurant_id = ?
+    `);
+    const info = stmt.run(status, orderId, restaurantId);
+    return info.changes > 0;
   } finally {
     db.close();
   }
@@ -1437,3 +1930,307 @@ export function isInWishlistFromDb(userId: number, foodId: number): boolean {
     db.close();
   }
 }
+
+// ============================================================
+// FOOD RATINGS & RESTAURANT RECALCULATION QUERIES
+// ============================================================
+
+/**
+ * Get any delivered order that has not been rated yet.
+ * Checks by:
+ * 1. specific orderId (if provided)
+ * 2. userId (if logged in, e.g. customer5 or any user)
+ * 3. candidateOrderIds (from local storage)
+ * 4. or fallback to most recent delivered unrated order
+ */
+export function getPendingRatingOrderForUser(
+  userId?: number | null,
+  orderId?: number | null,
+  candidateOrderIds?: number[]
+): PendingRatingOrder | null {
+  const db = getDb();
+  try {
+    let orderRow: any = null;
+
+    if (orderId) {
+      orderRow = db.prepare(`
+        SELECT * FROM orders 
+        WHERE id = ? AND status = 'Delivered' AND (needs_rating = 1 OR is_rated = 0 OR is_rated IS NULL)
+      `).get(orderId);
+    }
+
+    if (!orderRow && userId) {
+      orderRow = db.prepare(`
+        SELECT * FROM orders 
+        WHERE user_id = ? AND status = 'Delivered' AND (needs_rating = 1 OR is_rated = 0 OR is_rated IS NULL)
+        ORDER BY id DESC LIMIT 1
+      `).get(userId);
+    }
+
+    if (!orderRow && candidateOrderIds && candidateOrderIds.length > 0) {
+      const placeholders = candidateOrderIds.map(() => '?').join(',');
+      orderRow = db.prepare(`
+        SELECT * FROM orders 
+        WHERE id IN (${placeholders}) AND status = 'Delivered' AND (needs_rating = 1 OR is_rated = 0 OR is_rated IS NULL)
+        ORDER BY id DESC LIMIT 1
+      `).get(...candidateOrderIds);
+    }
+
+    // Check customer_rating_prompts table created by trigger
+    if (!orderRow) {
+      const prompt = db.prepare(`
+        SELECT order_id FROM customer_rating_prompts 
+        WHERE status = 'pending' ${userId ? 'AND (user_id = ? OR user_id IS NULL)' : ''}
+        ORDER BY id DESC LIMIT 1
+      `).get(...(userId ? [userId] : [])) as any;
+      if (prompt && prompt.order_id) {
+        orderRow = db.prepare('SELECT * FROM orders WHERE id = ?').get(prompt.order_id);
+      }
+    }
+
+    // If still not found and no specific user/order requested, check most recent delivered unrated order
+    if (!orderRow && !userId && !orderId && (!candidateOrderIds || candidateOrderIds.length === 0)) {
+      orderRow = db.prepare(`
+        SELECT * FROM orders 
+        WHERE status = 'Delivered' AND (needs_rating = 1 OR is_rated = 0 OR is_rated IS NULL)
+        ORDER BY id DESC LIMIT 1
+      `).get();
+    }
+
+    if (!orderRow) return null;
+
+    // Fetch items with food & restaurant information
+    const items = db.prepare(`
+      SELECT 
+        oi.id,
+        oi.order_id,
+        oi.food_id,
+        oi.food_name,
+        oi.price,
+        oi.quantity,
+        f.image_url,
+        f.rating as current_food_rating,
+        f.restaurant_id,
+        r.name as restaurant_name,
+        r.image_url as restaurant_logo,
+        r.rating as restaurant_rating
+      FROM order_items oi
+      LEFT JOIN food_items f ON oi.food_id = f.id
+      LEFT JOIN restaurants r ON f.restaurant_id = r.id
+      WHERE oi.order_id = ?
+    `).all(orderRow.id) as any[];
+
+    // Extract restaurant info from first item or fallback to restaurant 1
+    let restId = 1;
+    let restName = 'Restaurant';
+    let restLogo = '';
+    let restRating = 4.8;
+
+    for (const it of items) {
+      if (it.restaurant_id) {
+        restId = it.restaurant_id;
+        restName = it.restaurant_name || restName;
+        restLogo = it.restaurant_logo || restLogo;
+        restRating = Number(it.restaurant_rating) || restRating;
+        break;
+      }
+    }
+
+    if (restName === 'Restaurant') {
+      const r = db.prepare('SELECT id, name, image_url, rating FROM restaurants WHERE id = ?').get(restId) as any;
+      if (r) {
+        restName = r.name;
+        restLogo = r.image_url || '';
+        restRating = Number(r.rating) || 4.8;
+      }
+    }
+
+    return {
+      id: orderRow.id,
+      user_id: orderRow.user_id,
+      rider_id: orderRow.rider_id,
+      customer_name: orderRow.customer_name,
+      phone_number: orderRow.phone_number,
+      delivery_address: orderRow.delivery_address,
+      total_amount: Number(orderRow.total_amount),
+      status: orderRow.status,
+      is_rated: Number(orderRow.is_rated || 0),
+      created_at: orderRow.created_at,
+      restaurant_id: restId,
+      restaurant_name: restName,
+      restaurant_logo: restLogo,
+      restaurant_rating: restRating,
+      items: items.map(it => ({
+        id: it.id,
+        order_id: it.order_id,
+        food_id: it.food_id,
+        food_name: it.food_name,
+        price: Number(it.price),
+        quantity: Number(it.quantity),
+        image_url: it.image_url || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop&q=80',
+        current_food_rating: Number(it.current_food_rating || 4.8),
+      })),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Submit ratings for all foods in a delivered order.
+ * Inserts into food_ratings; SQLite triggers automatically:
+ *  - Update food rating (avg of all ratings)
+ *  - Update restaurant rating (avg of food ratings)
+ *  - Mark order is_rated=1 and needs_rating=0 once all items rated
+ *  - Close the customer_rating_prompts entry
+ */
+export function submitOrderRatingsInDb(
+  orderId: number,
+  userId: number | null,
+  ratings: OrderFoodRatingInput[]
+): SubmitOrderRatingsResult {
+  const db = getDb();
+  try {
+    const submitTx = db.transaction(() => {
+      // 1. Verify order exists
+      const order = db.prepare('SELECT id, status, is_rated FROM orders WHERE id = ?').get(orderId) as any;
+      if (!order) {
+        throw new Error(`Order #${orderId} was not found`);
+      }
+
+      const updatedFoods: { foodId: number; foodName: string; newRating: number }[] = [];
+      let primaryRestId = 1;
+      let primaryRestName = 'Restaurant';
+      let prevRestRating = 4.8;
+
+      // 2. Insert food ratings — triggers handle the rest
+      for (const item of ratings) {
+        const food = db.prepare('SELECT id, name, restaurant_id, rating FROM food_items WHERE id = ?').get(item.food_id) as any;
+        if (!food) continue;
+
+        const restId = food.restaurant_id || 1;
+        primaryRestId = restId;
+        primaryRestName = food.restaurant_name || primaryRestName;
+
+        const restRow = db.prepare('SELECT name, rating FROM restaurants WHERE id = ?').get(restId) as any;
+        if (restRow) {
+          primaryRestName = restRow.name;
+          prevRestRating = Number(restRow.rating) || 4.8;
+        }
+
+        const ratingVal = Math.min(5, Math.max(1, Number(item.rating) || 5));
+
+        // Insert — triggers auto-update food rating, restaurant rating, order status
+        db.prepare(`
+          INSERT OR IGNORE INTO food_ratings (order_id, food_id, restaurant_id, user_id, rating, review_text)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(orderId, item.food_id, restId, userId, ratingVal, item.review_text?.trim() || null);
+
+        updatedFoods.push({
+          foodId: item.food_id,
+          foodName: food.name,
+          newRating: ratingVal,
+        });
+      }
+
+      // 3. Read updated restaurant rating (trigger already updated it)
+      const restRow = db.prepare('SELECT rating FROM restaurants WHERE id = ?').get(primaryRestId) as any;
+      const newRestRating = restRow ? Number(restRow.rating) || prevRestRating : prevRestRating;
+
+      return {
+        orderId,
+        restaurantId: primaryRestId,
+        restaurantName: primaryRestName,
+        previousRestaurantRating: prevRestRating,
+        newRestaurantRating: newRestRating,
+        updatedFoods,
+      };
+    });
+
+    return submitTx();
+  } finally {
+    db.close();
+  }
+}
+
+// ============================================================
+// USER ORDERS HISTORY
+// ============================================================
+
+export interface UserOrderSummary {
+  id: number;
+  status: string;
+  total_amount: number;
+  delivery_location: string;
+  delivery_address: string;
+  payment_method: string;
+  is_rated: number;
+  needs_rating: number;
+  created_at: string;
+  rider_name: string | null;
+  items: { food_name: string; quantity: number; price: number }[];
+}
+
+/**
+ * Get all orders for a specific user, newest first, with item summaries and rider info.
+ */
+export function getUserOrdersFromDb(userId: number): UserOrderSummary[] {
+  const db = getDb();
+  try {
+    const orders = db.prepare(`
+      SELECT o.id, o.status, o.total_amount, o.delivery_location, o.delivery_address,
+             o.payment_method, o.is_rated, o.needs_rating, o.created_at,
+             r.full_name as rider_name
+      FROM orders o
+      LEFT JOIN riders r ON o.rider_id = r.id
+      WHERE o.user_id = ?
+      ORDER BY o.id DESC
+    `).all(userId) as any[];
+
+    return orders.map((order) => {
+      const items = db.prepare(`
+        SELECT food_name, quantity, price FROM order_items WHERE order_id = ?
+      `).all(order.id) as any[];
+      return {
+        id: order.id,
+        status: order.status,
+        total_amount: Number(order.total_amount),
+        delivery_location: order.delivery_location || 'Dhanmondi',
+        delivery_address: order.delivery_address || '',
+        payment_method: order.payment_method || 'Cash on Delivery',
+        is_rated: Number(order.is_rated || 0),
+        needs_rating: Number(order.needs_rating || 0),
+        created_at: order.created_at,
+        rider_name: order.rider_name || null,
+        items: items.map((it) => ({
+          food_name: it.food_name,
+          quantity: Number(it.quantity),
+          price: Number(it.price),
+        })),
+      };
+    });
+  } finally {
+    db.close();
+  }
+}
+
+// ============================================================
+// RIDER LOCATION UPDATE
+// ============================================================
+
+/**
+ * Update a rider's current delivery zone location.
+ * When rider is Available, trigger will auto-assign pending orders in that zone.
+ */
+export function updateRiderLocationInDb(riderId: number, location: string): boolean {
+  const db = getDb();
+  try {
+    const result = db.prepare(`
+      UPDATE riders SET location = ? WHERE id = ?
+    `).run(location, riderId);
+    return result.changes > 0;
+  } finally {
+    db.close();
+  }
+}
+

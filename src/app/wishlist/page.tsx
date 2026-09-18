@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import ProductCard from "@/components/ProductCard";
-import { FoodItem } from "@/lib/db";
+import type { FoodItem } from "@/lib/db";
 import { useApp } from "@/context/AppContext";
 import { Heart, ShoppingBag } from "lucide-react";
 import Link from "next/link";

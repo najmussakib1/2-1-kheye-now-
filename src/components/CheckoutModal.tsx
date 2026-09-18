@@ -17,7 +17,9 @@ import {
   ArrowRight,
   ShieldCheck,
   Check,
+  Compass,
 } from 'lucide-react';
+import { DELIVERY_LOCATIONS } from '@/lib/constants';
 
 export default function CheckoutModal() {
   const {
@@ -35,6 +37,7 @@ export default function CheckoutModal() {
   const [customerName, setCustomerName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryLocation, setDeliveryLocation] = useState<string>('Dhanmondi');
   const [paymentMethod, setPaymentMethod] = useState('Cash on Delivery');
   const [orderNotes, setOrderNotes] = useState('');
   const [saveAddressForFuture, setSaveAddressForFuture] = useState(false);
@@ -57,6 +60,7 @@ export default function CheckoutModal() {
       setCustomerName(user?.full_name || '');
       setPhoneNumber(user?.phone_number || '');
       setDeliveryAddress(user?.address || '');
+      setDeliveryLocation('Dhanmondi');
       setOrderNotes('');
       setPaymentMethod('Cash on Delivery');
       setError(null);
@@ -112,6 +116,7 @@ export default function CheckoutModal() {
           customer_name: customerName.trim(),
           phone_number: phoneNumber.trim(),
           delivery_address: deliveryAddress.trim(),
+          delivery_location: deliveryLocation,
           payment_method: paymentMethod,
           order_notes: orderNotes.trim(),
           total_amount: grandTotal,
@@ -147,6 +152,18 @@ export default function CheckoutModal() {
         }
 
         showToast('Order confirmed! We are preparing your food.', 'success');
+
+        // Store placed order ID in localStorage for rating prompt when delivered
+        if (typeof window !== 'undefined' && json.orderId) {
+          try {
+            const stored = JSON.parse(localStorage.getItem('kheye_now_order_ids') || '[]');
+            const updated = Array.from(new Set([Number(json.orderId), ...stored]));
+            localStorage.setItem('kheye_now_order_ids', JSON.stringify(updated));
+            localStorage.setItem('kheye_now_last_order_id', String(json.orderId));
+          } catch {
+            // ignore localStorage error
+          }
+        }
 
         // Show Success confirmation screen
         setOrderSuccess({
@@ -386,21 +403,43 @@ export default function CheckoutModal() {
                   </div>
                 </div>
 
-                {/* Delivery Address */}
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
-                    Delivery Address *
-                  </label>
-                  <div className="relative">
-                    <MapPin className="absolute left-3.5 top-3 w-4 h-4 text-emerald-500/70" />
-                    <textarea
-                      rows={2}
-                      required
-                      value={deliveryAddress}
-                      onChange={(e) => setDeliveryAddress(e.target.value)}
-                      placeholder="House / Apartment #, Road, Area, City"
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/25 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400 transition-all resize-none"
-                    />
+                {/* Delivery Location & Address */}
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                      Delivery Location / Zone *
+                    </label>
+                    <div className="relative">
+                      <Compass className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500/70" />
+                      <select
+                        value={deliveryLocation}
+                        onChange={(e) => setDeliveryLocation(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/25 text-sm text-white focus:outline-none focus:border-emerald-400 transition-all appearance-none cursor-pointer"
+                      >
+                        {DELIVERY_LOCATIONS.map((loc) => (
+                          <option key={loc} value={loc} className="bg-slate-900 text-white">
+                            {loc}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
+                      Delivery Address *
+                    </label>
+                    <div className="relative">
+                      <MapPin className="absolute left-3.5 top-3 w-4 h-4 text-emerald-500/70" />
+                      <textarea
+                        rows={2}
+                        required
+                        value={deliveryAddress}
+                        onChange={(e) => setDeliveryAddress(e.target.value)}
+                        placeholder="House / Apartment #, Road, Area details"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/25 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400 transition-all resize-none"
+                      />
+                    </div>
                   </div>
                 </div>
 

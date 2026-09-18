@@ -5,7 +5,7 @@ import Link from 'next/link';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import SimilarProductsSlider from '@/components/SimilarProductsSlider';
-import { FoodItem, FoodAddon } from '@/lib/db';
+import type { FoodItem, FoodAddon } from '@/lib/db';
 import { useApp } from '@/context/AppContext';
 import { 
   Star, 
@@ -241,7 +241,15 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">Served by</p>
-                    <p className="text-sm font-bold text-white">{item.restaurant_name || 'Restaurant'}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-sm font-bold text-white">{item.restaurant_name || 'Restaurant'}</p>
+                      {item.restaurant_rating !== undefined && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-black text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded-lg border border-amber-400/30">
+                          <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                          {Number(item.restaurant_rating).toFixed(1)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -285,13 +293,22 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-1">
                     {[1, 2, 3, 4, 5].map((star) => (
-                      <Star key={star} className="w-5 h-5 fill-emerald-400 text-emerald-400" />
+                      <Star
+                        key={star}
+                        className={`w-5 h-5 ${
+                          star <= Math.round(Number(item.rating || 4.8))
+                            ? 'fill-emerald-400 text-emerald-400'
+                            : 'fill-transparent text-slate-600'
+                        }`}
+                      />
                     ))}
                   </div>
-                  <span className="text-base font-extrabold text-white">5.0</span>
+                  <span className="text-base font-extrabold text-white">
+                    {Number(item.rating || 4.8).toFixed(1)}
+                  </span>
                 </div>
                 <div className="text-xs text-slate-400 font-semibold">
-                  Based on <span className="text-emerald-300 font-bold">128 Customer Reviews</span>
+                  Dish Community Rating • <span className="text-emerald-300 font-bold">{Number(item.rating || 4.8).toFixed(1)} / 5.0</span>
                 </div>
               </div>
 

@@ -5,6 +5,7 @@ import {
   findRiderByIdFromDb,
   updateRiderStatusInDb,
   updateRiderProfileInDb,
+  updateRiderLocationInDb,
   getRiderDeliveriesFromDb,
   updateOrderStatusByRiderInDb,
 } from '@/lib/db';
@@ -56,10 +57,14 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json();
-    const { status, full_name, phone_number, vehicle_type, vehicle_number, address, avatar_url } = body;
+    const { status, location, full_name, phone_number, vehicle_type, vehicle_number, address, avatar_url } = body;
 
     if (status !== undefined) {
       updateRiderStatusInDb(session.id, status);
+    }
+
+    if (location !== undefined) {
+      updateRiderLocationInDb(session.id, location);
     }
 
     const updated = updateRiderProfileInDb(session.id, {

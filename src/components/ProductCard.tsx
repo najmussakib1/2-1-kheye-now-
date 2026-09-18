@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { FoodItem } from '@/lib/db';
+import type { FoodItem } from '@/lib/db';
 import { useApp } from '@/context/AppContext';
 import { ShoppingCart, Star, CheckCircle2, XCircle, Tag, Eye, Store, Heart } from 'lucide-react';
 
@@ -106,10 +106,18 @@ export default function ProductCard({ item, onAddToCart }: ProductCardProps) {
             </h3>
           </Link>
           {item.restaurant_name && (
-            <p className="text-[10px] font-semibold text-emerald-400/70 mt-0.5 flex items-center gap-1">
-              <Store className="w-3 h-3" />
-              {item.restaurant_name}
-            </p>
+            <div className="flex items-center justify-between text-[10px] font-semibold text-emerald-400/80 mt-0.5">
+              <span className="flex items-center gap-1 line-clamp-1">
+                <Store className="w-3 h-3 flex-shrink-0" />
+                <span>{item.restaurant_name}</span>
+              </span>
+              {item.restaurant_rating !== undefined && (
+                <span className="inline-flex items-center gap-0.5 text-amber-300 font-bold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-400/25 flex-shrink-0">
+                  <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                  <span>{Number(item.restaurant_rating).toFixed(1)}</span>
+                </span>
+              )}
+            </div>
           )}
           <p className="text-xs text-slate-400 line-clamp-2 mt-1 leading-relaxed">
             {item.description}

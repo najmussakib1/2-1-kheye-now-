@@ -18,9 +18,11 @@ import {
   LayoutDashboard,
   Bike,
   Heart,
+  PackageSearch,
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { useRouter } from 'next/navigation';
+import UserOrdersModal from '@/components/UserOrdersModal';
 
 interface NavbarProps {
   onSelectCategory?: (category: string) => void;
@@ -42,6 +44,7 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
   const [isCategoryOpen, setIsCategoryOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isOrdersModalOpen, setIsOrdersModalOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -344,6 +347,18 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
                           <span>My Wishlist</span>
                         </Link>
 
+                        {/* My Orders Button */}
+                        <button
+                          onClick={() => {
+                            setIsUserMenuOpen(false);
+                            setIsOrdersModalOpen(true);
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-200 hover:bg-emerald-500/15 hover:text-emerald-300 transition-colors"
+                        >
+                          <PackageSearch className="w-4 h-4 text-emerald-400" />
+                          <span>My Orders</span>
+                        </button>
+
                         {/* Divider */}
                         <div className="my-1 border-t border-emerald-500/15" />
 
@@ -505,6 +520,12 @@ export default function Navbar({ onSelectCategory }: NavbarProps) {
           </div>
         </div>
       )}
+
+      {/* My Orders Modal */}
+      <UserOrdersModal
+        isOpen={isOrdersModalOpen}
+        onClose={() => setIsOrdersModalOpen(false)}
+      />
     </header>
   );
 }

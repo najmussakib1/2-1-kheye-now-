@@ -25,8 +25,13 @@ import {
   Edit3,
   Layers,
   Upload,
+  ClipboardList,
+  Clock,
+  Check,
+  Bike,
+  RefreshCw,
 } from 'lucide-react';
-import { FoodItem, FoodAddon } from '@/lib/db';
+import type { FoodItem, FoodAddon } from '@/lib/db';
 
 const CATEGORIES = [
   'Fast Food',
@@ -111,6 +116,12 @@ export default function RestaurantDashboardPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('All');
 
+  // ── Orders State
+  const [orders, setOrders] = useState<any[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
+  const [orderStatusFilter, setOrderStatusFilter] = useState('All');
+
   // ── Add Item Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addName, setAddName] = useState('');
@@ -118,6 +129,7 @@ export default function RestaurantDashboardPage() {
   const [addBasePrice, setAddBasePrice] = useState('');
   const [addSalePrice, setAddSalePrice] = useState('');
   const [addCategory, setAddCategory] = useState('Fast Food');
+  const [addStock, setAddStock] = useState('50');
   const [addImages, setAddImages] = useState<string[]>([]);
   const [addLoading, setAddLoading] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
@@ -129,6 +141,7 @@ export default function RestaurantDashboardPage() {
   const [editBasePrice, setEditBasePrice] = useState('');
   const [editSalePrice, setEditSalePrice] = useState('');
   const [editCategory, setEditCategory] = useState('Fast Food');
+  const [editStock, setEditStock] = useState('50');
   const [editImages, setEditImages] = useState<string[]>([]);
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
@@ -239,9 +252,49 @@ export default function RestaurantDashboardPage() {
     }
   };
 
+  // Fetch Restaurant Orders
+  const fetchRestaurantOrders = async () => {
+    setOrdersLoading(true);
+    try {
+      const res = await fetch('/api/restaurant/orders');
+      const json = await res.json();
+      if (json.success) {
+        setOrders(json.data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching restaurant orders:', err);
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
+  const handleUpdateOrderStatus = async (orderId: number, nextStatus: string) => {
+    setUpdatingOrderId(orderId);
+    try {
+      const res = await fetch('/api/restaurant/orders', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: orderId, status: nextStatus }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(json.message || `Order updated to ${nextStatus}`, 'success');
+        // Refresh orders list
+        fetchRestaurantOrders();
+      } else {
+        showToast(json.error || 'Failed to update order status', 'error');
+      }
+    } catch {
+      showToast('Network error updating order status', 'error');
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  };
+
   useEffect(() => {
     if (restaurant && role === 'restaurant') {
       fetchRestaurantFoods();
+      fetchRestaurantOrders();
     }
   }, [restaurant, role]);
 
@@ -298,9 +351,10 @@ export default function RestaurantDashboardPage() {
           base_price: Number(addBasePrice) || Number(addSalePrice),
           sale_price: Number(addSalePrice),
           category: addCategory,
+          stock: Number(addStock) || 0,
           images: addImages,
           image_url: addImages[0] || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800&auto=format&fit=crop&q=80',
-          is_available: true,
+          is_available: (Number(addStock) || 0) > 0,
         }),
       });
       const json = await res.json();
@@ -310,7 +364,7 @@ export default function RestaurantDashboardPage() {
         showToast(`"${json.data.name}" added to menu successfully!`, 'success');
         setIsAddModalOpen(false);
         setAddName(''); setAddDesc(''); setAddBasePrice(''); setAddSalePrice('');
-        setAddCategory('Fast Food'); setAddImages([]);
+        setAddCategory('Fast Food'); setAddStock('50'); setAddImages([]);
         fetchRestaurantFoods();
       }
     } catch {
@@ -328,6 +382,7 @@ export default function RestaurantDashboardPage() {
     setEditBasePrice(String(item.base_price));
     setEditSalePrice(String(item.sale_price));
     setEditCategory(item.category || 'Fast Food');
+    setEditStock(String(item.stock !== undefined && item.stock !== null ? item.stock : 50));
     // Populate images: prefer parsed images array, else use image_url
     const imgs = item.images && item.images.length > 0 ? item.images : (item.image_url ? [item.image_url] : []);
     setEditImages(imgs);
@@ -351,6 +406,7 @@ export default function RestaurantDashboardPage() {
           base_price: Number(editBasePrice) || Number(editSalePrice),
           sale_price: Number(editSalePrice),
           category: editCategory,
+          stock: Number(editStock) || 0,
           images: editImages,
           image_url: editImages[0] || editItem.image_url || '',
         }),
@@ -413,9 +469,13 @@ export default function RestaurantDashboardPage() {
                     <span className="px-3 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-300">
                       Partner Portal
                     </span>
-                    <span className="flex items-center gap-1 text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/30">
+                    <span
+                      title="Restaurant rating is calculated as the average of all its food item ratings"
+                      className="flex items-center gap-1 text-xs font-bold text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-lg border border-amber-500/30"
+                    >
                       <Star className="w-3.5 h-3.5 fill-amber-400" />
                       <span>{Number(restaurant.rating).toFixed(1)}</span>
+                      <span className="text-[10px] text-amber-300/80 font-normal hidden sm:inline">(Avg of Foods)</span>
                     </span>
                   </div>
                   <h1 className="text-2xl sm:text-3xl font-extrabold text-white mt-1.5">{restaurant.name}</h1>
@@ -544,6 +604,13 @@ export default function RestaurantDashboardPage() {
                             {it.base_price > it.sale_price && (
                               <del className="text-xs text-slate-500">৳{it.base_price}</del>
                             )}
+                            <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                              (it.stock ?? 0) > 0
+                                ? 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+                                : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                            }`}>
+                              {(it.stock ?? 0) > 0 ? `Stock: ${it.stock}` : 'Out of Stock'}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -610,6 +677,174 @@ export default function RestaurantDashboardPage() {
                 >
                   + Add Food Item
                 </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── Restaurant Orders & Live Preparation Section ── */}
+          <div className="space-y-6 pt-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <ClipboardList className="w-5 h-5 text-emerald-400" />
+                  <span>Incoming & Active Orders</span>
+                  <span className="text-xs font-semibold text-emerald-400 bg-emerald-500/15 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                    {orders.length} total
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Orders arrive in <strong>Preparing</strong> phase. Mark as <strong>Prepared</strong> to auto-assign a rider.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {/* Filter tabs */}
+                <div className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-emerald-500/20 text-xs">
+                  {['All', 'Preparing', 'Prepared', 'Delivered'].map((status) => (
+                    <button
+                      key={status}
+                      onClick={() => setOrderStatusFilter(status)}
+                      className={`px-3 py-1 rounded-lg font-medium transition-all ${
+                        orderStatusFilter === status
+                          ? 'bg-emerald-500 text-slate-950 font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {status}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={fetchRestaurantOrders}
+                  disabled={ordersLoading}
+                  className="p-2 rounded-xl bg-slate-900/80 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/10 transition-all disabled:opacity-50"
+                  title="Refresh Orders"
+                >
+                  <RefreshCw className={`w-4 h-4 ${ordersLoading ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* Orders List / Cards */}
+            {ordersLoading ? (
+              <div className="space-y-3">
+                {[1, 2].map((n) => (
+                  <div key={n} className="h-28 rounded-2xl bg-slate-900/50 border border-slate-800 animate-pulse" />
+                ))}
+              </div>
+            ) : orders.filter((o) => orderStatusFilter === 'All' || o.status === orderStatusFilter).length > 0 ? (
+              <div className="space-y-3">
+                {orders
+                  .filter((o) => orderStatusFilter === 'All' || o.status === orderStatusFilter)
+                  .map((order) => {
+                    const isPreparing = order.status === 'Preparing';
+                    const isPrepared = order.status === 'Prepared';
+                    const isDelivered = order.status === 'Delivered';
+
+                    return (
+                      <div
+                        key={order.id}
+                        className="p-5 rounded-2xl bg-slate-900/70 border border-emerald-500/20 hover:border-emerald-500/35 transition-all space-y-3"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-emerald-500/10">
+                          <div className="flex items-center gap-3">
+                            <span className="text-base font-extrabold text-white">
+                              Order #{order.id}
+                            </span>
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                                isPreparing
+                                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 animate-pulse'
+                                  : isPrepared
+                                  ? 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+                                  : isDelivered
+                                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                  : 'bg-slate-800 text-slate-300 border-slate-700'
+                              }`}
+                            >
+                              {order.status}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              {order.created_at ? new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {/* Action: Mark as Prepared */}
+                            {isPreparing && (
+                              <button
+                                onClick={() => handleUpdateOrderStatus(order.id, 'Prepared')}
+                                disabled={updatingOrderId === order.id}
+                                className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-500 text-slate-950 hover:bg-emerald-400 flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all disabled:opacity-50"
+                              >
+                                <Check className="w-3.5 h-3.5 stroke-[3]" />
+                                <span>{updatingOrderId === order.id ? 'Updating...' : 'Mark as Prepared'}</span>
+                              </button>
+                            )}
+
+                            {/* Status badge if already prepared */}
+                            {isPrepared && (
+                              <span className="text-xs text-sky-300 bg-sky-500/10 px-3 py-1.5 rounded-xl border border-sky-500/25 flex items-center gap-1.5">
+                                <Clock className="w-3.5 h-3.5 text-sky-400" />
+                                <span>Prepared • Waiting for Delivery</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Customer & Location Details */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-300">
+                          <div>
+                            <span className="text-slate-500 block">Customer:</span>
+                            <strong className="text-white">{order.customer_name}</strong> ({order.phone_number})
+                          </div>
+                          <div>
+                            <span className="text-slate-500 block">Delivery To:</span>
+                            <span className="text-slate-300 truncate block">{order.delivery_address}</span>
+                            <span className="text-[10px] text-emerald-400 font-semibold">{order.delivery_location || 'Dhanmondi'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500 block">Assigned Rider:</span>
+                            {order.rider_name ? (
+                              <span className="text-emerald-300 flex items-center gap-1">
+                                <Bike className="w-3.5 h-3.5" />
+                                <strong>{order.rider_name}</strong> ({order.rider_phone})
+                              </span>
+                            ) : (
+                              <span className="text-amber-400/80 italic">
+                                {isPreparing ? 'Rider assigned once prepared' : 'Waiting for available rider in zone...'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Order Items List */}
+                        {order.items && order.items.length > 0 && (
+                          <div className="pt-2 border-t border-slate-800/60 flex flex-wrap gap-2 items-center">
+                            <span className="text-[11px] text-slate-500 font-medium">Items:</span>
+                            {order.items.map((it: any, idx: number) => (
+                              <span
+                                key={idx}
+                                className="px-2 py-0.5 rounded-lg bg-slate-950 border border-emerald-500/20 text-xs text-slate-200"
+                              >
+                                {it.quantity}x <strong>{it.food_name}</strong> (৳{it.price})
+                              </span>
+                            ))}
+                            <span className="ml-auto text-xs font-extrabold text-emerald-400">
+                              Total: ৳{order.total_amount}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : (
+              <div className="p-8 text-center rounded-2xl bg-slate-900/50 border border-emerald-500/15">
+                <ClipboardList className="w-8 h-8 text-emerald-500/40 mx-auto mb-2" />
+                <h3 className="text-sm font-bold text-white">No {orderStatusFilter === 'All' ? '' : orderStatusFilter} orders</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Orders placed by customers will appear here in real-time.</p>
               </div>
             )}
           </div>
@@ -692,6 +927,16 @@ export default function RestaurantDashboardPage() {
                   placeholder="If discounted (e.g. 220)"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/25 text-xs text-white focus:outline-none focus:border-emerald-400 transition-all"
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">Initial Stock Quantity *</label>
+                <input
+                  type="number" min="0" required value={addStock} onChange={(e) => setAddStock(e.target.value)}
+                  placeholder="e.g. 50"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/25 text-xs text-white focus:outline-none focus:border-emerald-400 transition-all"
+                />
+                <p className="text-[10px] text-slate-500">Set to 0 to mark as Out of Stock. Stock decreases automatically on each order.</p>
               </div>
 
               <div className="space-y-1">
@@ -793,6 +1038,16 @@ export default function RestaurantDashboardPage() {
                   type="number" step="0.01" value={editBasePrice} onChange={(e) => setEditBasePrice(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/25 text-xs text-white focus:outline-none focus:border-emerald-400 transition-all"
                 />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300 uppercase tracking-wider">Stock Quantity *</label>
+                <input
+                  type="number" min="0" required value={editStock} onChange={(e) => setEditStock(e.target.value)}
+                  placeholder="e.g. 50"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/25 text-xs text-white focus:outline-none focus:border-emerald-400 transition-all"
+                />
+                <p className="text-[10px] text-slate-500">Set to 0 to mark as Out of Stock. Stock decreases automatically on each order.</p>
               </div>
 
               <div className="space-y-1">

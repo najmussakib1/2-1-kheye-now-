@@ -52,7 +52,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { name, description, base_price, sale_price, category, image_url, images, is_available } = body;
+    const { name, description, base_price, sale_price, category, image_url, images, is_available, stock } = body;
 
     if (!name || !name.trim()) {
       return NextResponse.json({ success: false, error: 'Food name is required' }, { status: 400 });
@@ -71,6 +71,7 @@ export async function POST(request: Request) {
       image_url: image_url?.trim() || '',
       images: Array.isArray(images) ? images : (image_url ? [image_url] : []),
       is_available: is_available !== undefined ? is_available : true,
+      stock: stock !== undefined ? Number(stock) : 50,
     });
 
     return NextResponse.json({
@@ -100,7 +101,7 @@ export async function PUT(request: Request) {
     }
 
     const body = await request.json();
-    const { item_id, id, name, description, base_price, sale_price, category, image_url, images, is_available } = body;
+    const { item_id, id, name, description, base_price, sale_price, category, image_url, images, is_available, stock } = body;
     const targetId = Number(item_id || id);
 
     if (!targetId) {
@@ -116,6 +117,7 @@ export async function PUT(request: Request) {
       image_url: image_url !== undefined ? image_url : undefined,
       images: Array.isArray(images) ? images : undefined,
       is_available: is_available !== undefined ? is_available : undefined,
+      stock: stock !== undefined ? Number(stock) : undefined,
     });
 
     if (!updated) {
