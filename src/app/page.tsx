@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Navbar from '@/components/Navbar';
 import HeroSlider from '@/components/HeroSlider';
+import FeaturedFoodSection from '@/components/FeaturedFoodSection';
 import ProductGrid from '@/components/ProductGrid';
 import Footer from '@/components/Footer';
 import RatingPromptModal from '@/components/RatingPromptModal';
@@ -82,6 +83,12 @@ export default function HomePage() {
       <main className="flex-1">
         {/* Animated Hero Carousel */}
         <HeroSlider />
+
+        {/* Featured Popular, Trending, Top 5 Most Ordered & Most Rated (Area-Aware) */}
+        <FeaturedFoodSection
+          onAddToCart={handleAddToCart}
+          refreshTrigger={refreshKey}
+        />
 
         {/* SQL Database Food Items Grid */}
         <ProductGrid

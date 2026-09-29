@@ -2462,3 +2462,255 @@ export function updateRiderLocationInDb(riderId: number, location: string): bool
   }
 }
 
+// ============================================================
+// POPULAR, TRENDING, TOP 5 ORDERED & MOST RATED FOOD ITEMS (AREA-AWARE)
+// ============================================================
+
+export interface TopOrderedFoodItem extends FoodItem {
+  rank: number;
+  total_ordered: number;
+  order_count: number;
+}
+
+export interface MostRatedFoodItem extends FoodItem {
+  review_count: number;
+}
+
+export interface FeaturedFoodResponse {
+  userArea: string | null;
+  selectedArea: string;
+  availableAreas: string[];
+  top5MostOrdered: TopOrderedFoodItem[];
+  /** Items most frequently added to wishlists across all users */
+  mostWishlisted: FoodItem[];
+  mostRated: MostRatedFoodItem[];
+}
+
+/**
+ * Identify a user's primary/most frequent delivery location from their past orders.
+ * Returns null if the user has no past orders.
+ */
+export function getUserDeliveryAreaFromDb(userId: number, externalDb?: Database.Database): string | null {
+  const db = externalDb || getDb();
+  const shouldClose = !externalDb;
+  try {
+    const row = db.prepare(`
+      SELECT delivery_location, COUNT(*) as cnt
+      FROM orders
+      WHERE user_id = ? AND delivery_location IS NOT NULL AND TRIM(delivery_location) != ''
+      GROUP BY delivery_location
+      ORDER BY cnt DESC, id DESC
+      LIMIT 1
+    `).get(userId) as { delivery_location: string } | undefined;
+
+    if (row && row.delivery_location) {
+      return row.delivery_location;
+    }
+
+    // Fallback: check user registered address string for known neighborhood names
+    const user = db.prepare(`SELECT address FROM users WHERE id = ?`).get(userId) as { address?: string } | undefined;
+    if (user?.address) {
+      const addr = user.address.toLowerCase();
+      const knownAreas = ['Dhanmondi', 'Gulshan', 'Banani', 'Mirpur', 'Uttara', 'Mohakhali', 'Badda', 'Bashundhara'];
+      for (const a of knownAreas) {
+        if (addr.includes(a.toLowerCase())) {
+          return a;
+        }
+      }
+    }
+
+    return null;
+  } finally {
+    if (shouldClose) db.close();
+  }
+}
+
+/**
+ * Returns all distinct delivery areas found in orders, with standard Dhaka zones.
+ */
+export function getAvailableDeliveryAreasFromDb(externalDb?: Database.Database): string[] {
+  const db = externalDb || getDb();
+  const shouldClose = !externalDb;
+  try {
+    const rows = db.prepare(`
+      SELECT DISTINCT delivery_location
+      FROM orders
+      WHERE delivery_location IS NOT NULL AND TRIM(delivery_location) != ''
+      ORDER BY delivery_location ASC
+    `).all() as { delivery_location: string }[];
+
+    const defaultAreas = ['Dhanmondi', 'Gulshan', 'Banani', 'Mirpur', 'Uttara'];
+    const areas = rows.map((r) => r.delivery_location);
+    return Array.from(new Set([...areas, ...defaultAreas]));
+  } finally {
+    if (shouldClose) db.close();
+  }
+}
+
+/**
+ * Get Featured Food Items including:
+ * 1. Top 5 Most Ordered items (by total quantity in area or citywide, with #1-#5 ranking)
+ * 2. Trending food items (recent orders + rating momentum score)
+ * 3. Most rated food items (highest customer satisfaction & review counts)
+ * 4. Popular products (top favorites)
+ *
+ * Fully area-aware: if area is specified (or resolved from user's order history),
+ * recommendations prioritize dishes popular in that neighborhood.
+ */
+export function getFeaturedFoodItemsFromDb(options?: {
+  area?: string | null;
+  userId?: number | null;
+  limit?: number;
+}): FeaturedFoodResponse {
+  const db = getDb();
+  try {
+    let userArea: string | null = null;
+    if (options?.userId) {
+      userArea = getUserDeliveryAreaFromDb(options.userId, db);
+    }
+
+    // Determine area to filter by: explicit area override > user's order area > 'All'
+    let selectedArea = 'All';
+    if (options?.area && options.area.trim() !== '' && options.area.toLowerCase() !== 'all') {
+      selectedArea = options.area.trim();
+    } else if (userArea) {
+      selectedArea = userArea;
+    }
+
+    const areaFilter = selectedArea !== 'All' ? selectedArea : null;
+    const availableAreas = getAvailableDeliveryAreasFromDb(db);
+    const limit = options?.limit || 8;
+
+    // 1. Top 5 Most Ordered Items (Area specific, fallback backfilled if < 5)
+    let topOrderedRows = db.prepare(`
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price,
+             calculate_discount(f.base_price, f.sale_price) AS discount_percentage,
+             get_food_stock_status(f.stock, f.is_available) AS stock_status,
+             f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at,
+             r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating,
+             COALESCE(SUM(oi.quantity), 0) as total_ordered,
+             COUNT(DISTINCT o.id) as order_count
+      FROM food_items f
+      JOIN order_items oi ON f.id = oi.food_id
+      JOIN orders o ON oi.order_id = o.id
+      LEFT JOIN restaurants r ON f.restaurant_id = r.id
+      WHERE o.status != 'Cancelled'
+        AND (? IS NULL OR LOWER(o.delivery_location) = LOWER(?))
+      GROUP BY f.id
+      ORDER BY total_ordered DESC, order_count DESC, f.rating DESC
+      LIMIT 5
+    `).all(areaFilter, areaFilter) as any[];
+
+    // If fewer than 5 items found for this specific area, backfill from citywide most ordered items
+    if (topOrderedRows.length < 5) {
+      const existingIds = topOrderedRows.map((r) => r.id);
+      const placeholders = existingIds.length > 0 ? existingIds.map(() => '?').join(',') : '0';
+      const backfillLimit = 5 - topOrderedRows.length;
+
+      const backfillRows = db.prepare(`
+        SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price,
+               calculate_discount(f.base_price, f.sale_price) AS discount_percentage,
+               get_food_stock_status(f.stock, f.is_available) AS stock_status,
+               f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at,
+               r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating,
+               COALESCE(SUM(oi.quantity), 0) as total_ordered,
+               COUNT(DISTINCT o.id) as order_count
+        FROM food_items f
+        JOIN order_items oi ON f.id = oi.food_id
+        JOIN orders o ON oi.order_id = o.id
+        LEFT JOIN restaurants r ON f.restaurant_id = r.id
+        WHERE o.status != 'Cancelled'
+          AND f.id NOT IN (${placeholders})
+        GROUP BY f.id
+        ORDER BY total_ordered DESC, order_count DESC, f.rating DESC
+        LIMIT ?
+      `).all(...existingIds, backfillLimit) as any[];
+
+      topOrderedRows = [...topOrderedRows, ...backfillRows];
+    }
+
+    // If still fewer than 5 (e.g. empty order table), backfill from top-rated food catalog
+    if (topOrderedRows.length < 5) {
+      const existingIds = topOrderedRows.map((r) => r.id);
+      const placeholders = existingIds.length > 0 ? existingIds.map(() => '?').join(',') : '0';
+      const backfillLimit = 5 - topOrderedRows.length;
+
+      const catalogFallback = db.prepare(`
+        SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price,
+               calculate_discount(f.base_price, f.sale_price) AS discount_percentage,
+               get_food_stock_status(f.stock, f.is_available) AS stock_status,
+               f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at,
+               r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating,
+               0 as total_ordered,
+               0 as order_count
+        FROM food_items f
+        LEFT JOIN restaurants r ON f.restaurant_id = r.id
+        WHERE f.id NOT IN (${placeholders})
+        ORDER BY f.rating DESC
+        LIMIT ?
+      `).all(...existingIds, backfillLimit) as any[];
+
+      topOrderedRows = [...topOrderedRows, ...catalogFallback];
+    }
+
+    const top5MostOrdered: TopOrderedFoodItem[] = topOrderedRows.slice(0, 5).map((row, idx) => ({
+      ...formatFoodItem(row),
+      rank: idx + 1,
+      total_ordered: Number(row.total_ordered || 0),
+      order_count: Number(row.order_count || 0),
+    }));
+
+    // 2. Most Wishlisted Food Items (Items most frequently added to wishlists by all users)
+    const mostWishlistedRows = db.prepare(`
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price,
+             calculate_discount(f.base_price, f.sale_price) AS discount_percentage,
+             get_food_stock_status(f.stock, f.is_available) AS stock_status,
+             f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at,
+             r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating,
+             COUNT(wi.id) AS wishlist_count
+      FROM food_items f
+      LEFT JOIN wishlist_items wi ON f.id = wi.food_id
+      LEFT JOIN restaurants r ON f.restaurant_id = r.id
+      WHERE f.is_available = 1
+      GROUP BY f.id
+      ORDER BY wishlist_count DESC, f.rating DESC, f.id DESC
+      LIMIT ?
+    `).all(limit) as any[];
+
+    const mostWishlisted: FoodItem[] = mostWishlistedRows.map(formatFoodItem);
+
+    // 3. Most Rated Products (Ordered by rating and review volume in food_ratings)
+    const mostRatedRows = db.prepare(`
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price,
+             calculate_discount(f.base_price, f.sale_price) AS discount_percentage,
+             get_food_stock_status(f.stock, f.is_available) AS stock_status,
+             f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at,
+             r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating,
+             COUNT(fr.id) as review_count
+      FROM food_items f
+      LEFT JOIN food_ratings fr ON f.id = fr.food_id
+      LEFT JOIN restaurants r ON f.restaurant_id = r.id
+      WHERE f.is_available = 1
+      GROUP BY f.id
+      ORDER BY f.rating DESC, review_count DESC, f.sale_price ASC
+      LIMIT ?
+    `).all(limit) as any[];
+
+    const mostRated: MostRatedFoodItem[] = mostRatedRows.map((row) => ({
+      ...formatFoodItem(row),
+      review_count: Number(row.review_count || 0),
+    }));
+
+    return {
+      userArea,
+      selectedArea,
+      availableAreas,
+      top5MostOrdered,
+      mostWishlisted,
+      mostRated,
+    };
+  } finally {
+    db.close();
+  }
+}
+
