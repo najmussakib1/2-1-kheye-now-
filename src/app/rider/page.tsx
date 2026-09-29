@@ -30,8 +30,10 @@ import {
   Utensils,
   Check,
   Compass,
+  Trophy,
 } from 'lucide-react';
 import type { SafeRider } from '@/lib/db';
+import type { RiderLeaderboardEntry } from '@/lib/complex-queries';
 import { DELIVERY_LOCATIONS } from '@/lib/constants';
 import Toast from '@/components/Toast';
 
@@ -41,6 +43,7 @@ export default function RiderPortalPage() {
   // Rider Auth State
   const [rider, setRider] = useState<SafeRider | null>(null);
   const [deliveries, setDeliveries] = useState<any[]>([]);
+  const [zoneLeaderboard, setZoneLeaderboard] = useState<RiderLeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
@@ -88,6 +91,7 @@ export default function RiderPortalPage() {
       if (json.success && json.rider) {
         setRider(json.rider);
         setDeliveries(json.deliveries || []);
+        setZoneLeaderboard(json.zoneLeaderboard || []);
       } else {
         setRider(null);
       }
@@ -785,8 +789,89 @@ export default function RiderPortalPage() {
             </div>
 
             {/* ================================================================
-                ACTIVE DELIVERIES & DISPATCH QUEUE
+                ZONE LEADERBOARD — TOP RIDERS BY MOST ORDERS
                ================================================================ */}
+            <div className="p-5 rounded-3xl bg-slate-900/60 border border-sky-500/20">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                    <Trophy className="w-5 h-5 text-sky-400" />
+                    Top Riders in {rider.location || 'Dhanmondi'}
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Ranked by most orders handled in your delivery zone
+                  </p>
+                </div>
+                <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-sky-500/10 border border-sky-500/30 text-sky-400">
+                  Top 3
+                </span>
+              </div>
+
+              {zoneLeaderboard.length === 0 ? (
+                <p className="text-sm text-slate-500 py-2">
+                  No completed deliveries in {rider.location || 'Dhanmondi'} yet.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {zoneLeaderboard.map((entry, i) => {
+                    const isMe = rider.id === entry.rider_id;
+                    return (
+                      <div
+                        key={entry.rider_id}
+                        className={`flex gap-3 items-center p-3 rounded-2xl border transition-colors ${
+                          isMe
+                            ? 'bg-sky-500/10 border-sky-400/50'
+                            : 'bg-slate-950/40 border-slate-800/60'
+                        }`}
+                      >
+                        <span
+                          className={`w-7 h-7 rounded-lg text-[11px] font-extrabold flex items-center justify-center flex-shrink-0 ${
+                            i === 0
+                              ? 'bg-amber-500/20 border border-amber-400/40 text-amber-300'
+                              : 'bg-sky-500/10 border border-sky-500/20 text-sky-300'
+                          }`}
+                        >
+                          {i + 1}
+                        </span>
+                        {entry.avatar_url ? (
+                          <img
+                            src={entry.avatar_url}
+                            alt={entry.full_name}
+                            className="w-10 h-10 rounded-xl object-cover flex-shrink-0 border border-sky-500/20"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center flex-shrink-0">
+                            <Bike className="w-5 h-5 text-sky-400" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-bold text-white truncate flex items-center gap-2">
+                            {entry.full_name}
+                            {isMe && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-sky-500/20 text-sky-300 border border-sky-400/30">
+                                You
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-xs text-slate-400 mt-0.5 truncate">
+                            {entry.status} · ★ {Number(entry.rating ?? 0).toFixed(1)}
+                          </p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-sm font-extrabold text-sky-300">
+                            {entry.order_count}
+                          </p>
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wide">
+                            orders
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>

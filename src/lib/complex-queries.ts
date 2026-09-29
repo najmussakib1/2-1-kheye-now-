@@ -8,6 +8,7 @@
  */
 
 import { getDb, formatFoodItem, type FoodItem, type TopOrderedFoodItem, type MostRatedFoodItem } from './db';
+import type Database from 'better-sqlite3';
 
 export interface MostRatedRestaurant {
   id: number;
@@ -29,6 +30,18 @@ export interface SuggestedAddon {
   addon_name: string;
   price: number;
   times_added: number;
+}
+
+export interface RiderLeaderboardEntry {
+  rider_id: number;
+  full_name: string;
+  phone_number: string;
+  location: string;
+  avatar_url: string | null;
+  status: string;
+  rating: number;
+  order_count: number;
+  total_amount: number;
 }
 
 export interface RestaurantStatsData {
@@ -68,6 +81,8 @@ export interface RestaurantStatsData {
     image_url: string | null;
     sale_price: number;
   }[];
+  topRidersByOrders: RiderLeaderboardEntry[];
+  topRidersByPayments: RiderLeaderboardEntry[];
   overview: {
     totalRevenue: number;
     totalOrders: number;
@@ -75,6 +90,86 @@ export interface RestaurantStatsData {
     avgOrderValue: number;
     totalItems: number;
   };
+}
+
+/**
+ * ------------------------------------------------------------
+ * Rider leaderboard helper (shared by restaurant + rider dashboards)
+ * ------------------------------------------------------------
+ * Aggregates non-cancelled orders per rider. Scope is either a single
+ * restaurant (riders who delivered that restaurant's orders) or a single
+ * delivery zone (riders whose declared `riders.location` matches).
+ * `orders.total_amount` is the collected payment value: the `payments`
+ * table has no `rider_id`, its `payment_status` is never advanced to
+ * 'Completed', and `paid_at` is never written, so it cannot be ranked on.
+ */
+type RiderLeaderboardRow = {
+  rider_id: number | string;
+  full_name: string;
+  phone_number: string | null;
+  location: string | null;
+  avatar_url: string | null;
+  status: string | null;
+  rating: number | string | null;
+  order_count: number | string;
+  total_amount: number | string;
+};
+
+function queryRiderLeaderboard(
+  db: Database.Database,
+  opts: { rank: 'orders' | 'payments'; limit: number; restaurantId?: number; zone?: string }
+): RiderLeaderboardEntry[] {
+  const orderBy =
+    opts.rank === 'payments'
+      ? 'ORDER BY total_amount DESC, order_count DESC'
+      : 'ORDER BY order_count DESC, total_amount DESC';
+
+  const where: string[] = [`o.status != 'Cancelled'`];
+  const params: Array<number | string> = [];
+
+  if (opts.restaurantId !== undefined) {
+    where.push('o.restaurant_id = ?');
+    params.push(opts.restaurantId);
+  }
+  if (opts.zone) {
+    where.push('LOWER(TRIM(r.location)) = LOWER(TRIM(?))');
+    params.push(opts.zone);
+  }
+
+  const rows = db
+    .prepare(
+      `
+      SELECT
+        r.id AS rider_id,
+        r.full_name,
+        r.phone_number,
+        r.location,
+        r.avatar_url,
+        r.status,
+        r.rating,
+        COUNT(DISTINCT o.id) AS order_count,
+        COALESCE(SUM(o.total_amount), 0) AS total_amount
+      FROM orders o
+      JOIN riders r ON o.rider_id = r.id
+      WHERE ${where.join(' AND ')}
+      GROUP BY r.id
+      ${orderBy}
+      LIMIT ?
+    `
+    )
+    .all(...params, opts.limit) as unknown as RiderLeaderboardRow[];
+
+  return rows.map((r) => ({
+    rider_id: Number(r.rider_id),
+    full_name: String(r.full_name || ''),
+    phone_number: String(r.phone_number || ''),
+    location: String(r.location || ''),
+    avatar_url: r.avatar_url || null,
+    status: String(r.status || ''),
+    rating: Number(r.rating || 0),
+    order_count: Number(r.order_count || 0),
+    total_amount: Number(r.total_amount || 0),
+  }));
 }
 
 /**
@@ -388,6 +483,20 @@ export function getRestaurantStatistics(restaurantId: number): RestaurantStatsDa
       total_revenue: Number(r.total_revenue || 0),
     }));
 
+    // 5.6 Riders with Most Orders (delivering for this restaurant)
+    const topRidersByOrders = queryRiderLeaderboard(db, {
+      rank: 'orders',
+      limit: TOP,
+      restaurantId,
+    });
+
+    // 5.7 Riders with Most Payments (highest total collected order value)
+    const topRidersByPayments = queryRiderLeaderboard(db, {
+      rank: 'payments',
+      limit: TOP,
+      restaurantId,
+    });
+
     // Overview Totals
     const overviewRow = db.prepare(`
       SELECT 
@@ -408,6 +517,8 @@ export function getRestaurantStatistics(restaurantId: number): RestaurantStatsDa
       mostOrderedLocation,
       mostAddedAddon,
       mostRevenueProduct,
+      topRidersByOrders,
+      topRidersByPayments,
       overview: {
         totalRevenue: totalRev,
         totalOrders: totalOrd,
@@ -423,7 +534,24 @@ export function getRestaurantStatistics(restaurantId: number): RestaurantStatsDa
 
 /**
  * ------------------------------------------------------------
- * COMPLEX QUERY 6: Featured Food Items (Top 5 Most Ordered, Most Wishlisted, Most Rated)
+ * COMPLEX QUERY 6: Top Riders in a Delivery Zone
+ * ------------------------------------------------------------
+ * Ranks riders sharing a delivery zone by the number of non-cancelled
+ * orders they have handled. Powers the zone leaderboard on the rider
+ * dashboard so riders can see how they rank against peers in their area.
+ */
+export function getTopRidersInZone(zone: string, limit = 3): RiderLeaderboardEntry[] {
+  const db = getDb();
+  try {
+    return queryRiderLeaderboard(db, { rank: 'orders', limit, zone });
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * ------------------------------------------------------------
+ * COMPLEX QUERY 7: Featured Food Items (Top 5 Most Ordered, Most Wishlisted, Most Rated)
  * ------------------------------------------------------------
  * Area-aware multi-table aggregation across:
  * - food_items, order_items, orders (rank-ordered top 5 by area with catalog backfills)

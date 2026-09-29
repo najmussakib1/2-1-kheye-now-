@@ -36,6 +36,7 @@ import {
   Trophy,
   ShoppingBag,
   Compass,
+  Wallet,
 } from 'lucide-react';
 import type { FoodItem, FoodAddon } from '@/lib/db';
 import type { RestaurantStatsData } from '@/lib/complex-queries';
@@ -925,7 +926,7 @@ export default function RestaurantDashboardPage() {
 
               {statsLoading ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {[...Array(5)].map((_, i) => (
+                  {[...Array(7)].map((_, i) => (
                     <div key={i} className="h-64 rounded-2xl bg-slate-900/60 border border-emerald-500/10 animate-pulse" />
                   ))}
                 </div>
@@ -1104,6 +1105,74 @@ export default function RestaurantDashboardPage() {
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  {/* Row 4: Top Riders by Orders + Top Riders by Payments */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="p-5 rounded-2xl bg-slate-900/70 border border-sky-500/20">
+                      <p className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                        <Bike className="w-3 h-3" /> Riders With Most Orders
+                      </p>
+                      {stats.topRidersByOrders.length === 0 ? (
+                        <p className="text-sm text-slate-500">No rider deliveries yet</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {stats.topRidersByOrders.map((rider, i) => (
+                            <div key={rider.rider_id} className="flex gap-3 items-center">
+                              <span className="w-6 h-6 rounded-lg bg-sky-500/10 border border-sky-500/20 text-sky-300 text-[11px] font-extrabold flex items-center justify-center flex-shrink-0">
+                                {i + 1}
+                              </span>
+                              {rider.avatar_url ? (
+                                <img src={rider.avatar_url} alt={rider.full_name} className="w-11 h-11 rounded-xl object-cover flex-shrink-0 border border-sky-500/20" />
+                              ) : (
+                                <div className="w-11 h-11 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center flex-shrink-0">
+                                  <Bike className="w-5 h-5 text-sky-400" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-bold text-white truncate">{rider.full_name}</p>
+                                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                                  {rider.location || '—'} · ★ {Number(rider.rating ?? 0).toFixed(1)}
+                                </p>
+                                <p className="text-xs text-sky-300 font-semibold mt-0.5">{rider.order_count} orders delivered</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-5 rounded-2xl bg-slate-900/70 border border-lime-500/20">
+                      <p className="text-[10px] font-bold text-lime-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                        <Wallet className="w-3 h-3" /> Riders With Most Payments
+                      </p>
+                      {stats.topRidersByPayments.length === 0 ? (
+                        <p className="text-sm text-slate-500">No payment data yet</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {stats.topRidersByPayments.map((rider, i) => (
+                            <div key={rider.rider_id} className="flex gap-3 items-center">
+                              <span className="w-6 h-6 rounded-lg bg-lime-500/10 border border-lime-500/20 text-lime-300 text-[11px] font-extrabold flex items-center justify-center flex-shrink-0">
+                                {i + 1}
+                              </span>
+                              {rider.avatar_url ? (
+                                <img src={rider.avatar_url} alt={rider.full_name} className="w-11 h-11 rounded-xl object-cover flex-shrink-0 border border-lime-500/20" />
+                              ) : (
+                                <div className="w-11 h-11 rounded-xl bg-lime-500/10 border border-lime-500/20 flex items-center justify-center flex-shrink-0">
+                                  <Wallet className="w-5 h-5 text-lime-400" />
+                                </div>
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-bold text-white truncate">{rider.full_name}</p>
+                                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                                  {rider.location || '—'} · {rider.order_count} orders
+                                </p>
+                                <p className="text-xs text-lime-300 font-bold mt-0.5">৳{Number(rider.total_amount ?? 0).toLocaleString()} collected</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </>
               )}

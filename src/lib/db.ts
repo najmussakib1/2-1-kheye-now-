@@ -1776,7 +1776,7 @@ export function findRiderByIdFromDb(id: number): SafeRider | null {
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT id, full_name, phone_number, email, vehicle_type, vehicle_number, driving_license, nid_number, address, avatar_url, status, total_deliveries, rating, earnings, created_at
+      SELECT id, full_name, phone_number, email, vehicle_type, vehicle_number, driving_license, nid_number, address, avatar_url, status, location, total_deliveries, rating, earnings, created_at
       FROM riders
       WHERE id = ?
     `);

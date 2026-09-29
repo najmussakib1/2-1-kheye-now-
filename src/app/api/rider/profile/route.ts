@@ -9,6 +9,7 @@ import {
   getRiderDeliveriesFromDb,
   updateOrderStatusByRiderInDb,
 } from '@/lib/db';
+import { getTopRidersInZone } from '@/lib/complex-queries';
 
 export async function GET() {
   try {
@@ -31,10 +32,15 @@ export async function GET() {
 
     const deliveries = getRiderDeliveriesFromDb(session.id);
 
+    const zone = rider.location || 'Dhanmondi';
+    const zoneLeaderboard = getTopRidersInZone(zone, 3);
+
     return NextResponse.json({
       success: true,
       rider,
       deliveries,
+      zone,
+      zoneLeaderboard,
     });
   } catch (error: any) {
     console.error('Error fetching rider profile:', error);
