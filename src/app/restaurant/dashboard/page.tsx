@@ -30,8 +30,15 @@ import {
   Check,
   Bike,
   RefreshCw,
+  BarChart3,
+  TrendingUp,
+  DollarSign,
+  Trophy,
+  ShoppingBag,
+  Compass,
 } from 'lucide-react';
 import type { FoodItem, FoodAddon } from '@/lib/db';
+import type { RestaurantStatsData } from '@/lib/complex-queries';
 
 const CATEGORIES = [
   'Fast Food',
@@ -115,12 +122,18 @@ export default function RestaurantDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('All');
+  const [activeTab, setActiveTab] = useState<'menu' | 'orders' | 'stats'>('menu');
+
+  // ── Statistics State (Authorized Complex Analytics)
+  const [stats, setStats] = useState<RestaurantStatsData | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   // ── Orders State
   const [orders, setOrders] = useState<any[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [updatingOrderId, setUpdatingOrderId] = useState<number | null>(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState('All');
+
 
   // ── Add Item Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -268,6 +281,22 @@ export default function RestaurantDashboardPage() {
     }
   };
 
+  // Fetch Authorized Complex Analytics & Statistics
+  const fetchRestaurantStats = async () => {
+    setStatsLoading(true);
+    try {
+      const res = await fetch('/api/restaurant/stats');
+      const json = await res.json();
+      if (json.success) {
+        setStats(json.data || null);
+      }
+    } catch (err) {
+      console.error('Error fetching restaurant stats:', err);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
   const handleUpdateOrderStatus = async (orderId: number, nextStatus: string) => {
     setUpdatingOrderId(orderId);
     try {
@@ -279,8 +308,9 @@ export default function RestaurantDashboardPage() {
       const json = await res.json();
       if (json.success) {
         showToast(json.message || `Order updated to ${nextStatus}`, 'success');
-        // Refresh orders list
+        // Refresh orders list and stats
         fetchRestaurantOrders();
+        fetchRestaurantStats();
       } else {
         showToast(json.error || 'Failed to update order status', 'error');
       }
@@ -295,8 +325,10 @@ export default function RestaurantDashboardPage() {
     if (restaurant && role === 'restaurant') {
       fetchRestaurantFoods();
       fetchRestaurantOrders();
+      fetchRestaurantStats();
     }
   }, [restaurant, role]);
+
 
   // ── Toggle Availability
   const handleToggleAvailability = async (item: FoodItem) => {
@@ -519,7 +551,25 @@ export default function RestaurantDashboardPage() {
             </div>
           </div>
 
-          {/* Product Management Section */}
+          {/* ── Dashboard Tab Navigation ── */}
+          <div className="flex items-center gap-1 p-1 rounded-2xl bg-slate-900/80 border border-emerald-500/20 w-fit">
+            {(['menu', 'orders', 'stats'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                  activeTab === tab
+                    ? 'bg-emerald-500 text-slate-950 shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {tab === 'stats' ? '📊 Analytics' : tab === 'orders' ? '📋 Orders' : '🍽 Menu'}
+              </button>
+            ))}
+          </div>
+
+          {/* ── MENU TAB ── */}
+          {activeTab === 'menu' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
@@ -680,8 +730,10 @@ export default function RestaurantDashboardPage() {
               </div>
             )}
           </div>
+          )} {/* end menu tab */}
 
-          {/* ── Restaurant Orders & Live Preparation Section ── */}
+          {/* ── ORDERS TAB ── */}
+          {activeTab === 'orders' && (
           <div className="space-y-6 pt-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
@@ -848,6 +900,216 @@ export default function RestaurantDashboardPage() {
               </div>
             )}
           </div>
+          )} {/* end orders tab */}
+
+          {/* ── STATS / ANALYTICS TAB ── */}
+          {activeTab === 'stats' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-emerald-400" />
+                    <span>Restaurant Analytics</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">Complex insights from your order and rating data</p>
+                </div>
+                <button
+                  onClick={fetchRestaurantStats}
+                  disabled={statsLoading}
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-500/40 text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 transition-all disabled:opacity-50"
+                >
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  {statsLoading ? 'Refreshing…' : 'Refresh'}
+                </button>
+              </div>
+
+              {statsLoading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {[...Array(5)].map((_, i) => (
+                    <div key={i} className="h-64 rounded-2xl bg-slate-900/60 border border-emerald-500/10 animate-pulse" />
+                  ))}
+                </div>
+              ) : !stats ? (
+                <div className="p-16 text-center rounded-2xl bg-slate-900/50 border border-emerald-500/15">
+                  <BarChart3 className="w-10 h-10 text-emerald-500/30 mx-auto mb-3" />
+                  <h3 className="text-base font-bold text-white">No analytics data yet</h3>
+                  <p className="text-xs text-slate-400 mt-1">Start receiving orders to see your restaurant&apos;s performance stats here.</p>
+                </div>
+              ) : (
+                <>
+                  {/* Overview Numbers */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-4 rounded-2xl bg-slate-900/70 border border-emerald-500/15 text-center">
+                      <DollarSign className="w-5 h-5 text-emerald-400 mx-auto mb-1" />
+                      <p className="text-lg font-extrabold text-white">৳{Number(stats.overview.totalRevenue).toLocaleString()}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Total Revenue</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-slate-900/70 border border-emerald-500/15 text-center">
+                      <ShoppingBag className="w-5 h-5 text-teal-400 mx-auto mb-1" />
+                      <p className="text-lg font-extrabold text-white">{stats.overview.totalOrders}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Total Orders</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-slate-900/70 border border-emerald-500/15 text-center">
+                      <Trophy className="w-5 h-5 text-amber-400 mx-auto mb-1" />
+                      <p className="text-lg font-extrabold text-white">{stats.overview.totalDelivered}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Delivered</p>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-slate-900/70 border border-emerald-500/15 text-center">
+                      <TrendingUp className="w-5 h-5 text-violet-400 mx-auto mb-1" />
+                      <p className="text-lg font-extrabold text-white">৳{Number(stats.overview.avgOrderValue).toFixed(0)}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Avg Order Value</p>
+                    </div>
+                  </div>
+
+                  {/* Row 1: Top Most Ordered + Top Most Revenue */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="p-5 rounded-2xl bg-slate-900/70 border border-emerald-500/20">
+                      <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                        <ShoppingBag className="w-3 h-3" /> Top Most Ordered Items
+                      </p>
+                      {stats.mostOrderedItem.length === 0 ? (
+                        <p className="text-sm text-slate-500">No order data yet</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {stats.mostOrderedItem.map((item, i) => (
+                            <div key={item.id} className="flex gap-3 items-start">
+                              <span className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[11px] font-extrabold flex items-center justify-center flex-shrink-0 mt-0.5">
+                                {i + 1}
+                              </span>
+                              {item.image_url && (
+                                <img src={item.image_url} alt={item.name} className="w-12 h-12 rounded-xl object-cover flex-shrink-0 border border-emerald-500/20" />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-bold text-white truncate">{item.name}</p>
+                                <p className="text-xs text-slate-400 mt-0.5">{item.order_count} orders · {item.total_quantity} units sold</p>
+                                <p className="text-xs text-emerald-300 font-semibold mt-0.5">৳{Number(item.sale_price ?? 0).toLocaleString()} / item</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-5 rounded-2xl bg-slate-900/70 border border-teal-500/20">
+                      <p className="text-[10px] font-bold text-teal-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                        <DollarSign className="w-3 h-3" /> Top Revenue Products
+                      </p>
+                      {stats.mostRevenueProduct.length === 0 ? (
+                        <p className="text-sm text-slate-500">No revenue data yet</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {stats.mostRevenueProduct.map((item, i) => (
+                            <div key={item.id} className="flex gap-3 items-start">
+                              <span className="w-6 h-6 rounded-lg bg-teal-500/10 border border-teal-500/20 text-teal-300 text-[11px] font-extrabold flex items-center justify-center flex-shrink-0 mt-0.5">
+                                {i + 1}
+                              </span>
+                              {item.image_url && (
+                                <img src={item.image_url} alt={item.name} className="w-12 h-12 rounded-xl object-cover flex-shrink-0 border border-teal-500/20" />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-bold text-white truncate">{item.name}</p>
+                                <p className="text-xs text-slate-400 mt-0.5">{item.total_quantity} units · ৳{Number(item.sale_price ?? 0).toLocaleString()} / item</p>
+                                <p className="text-xs text-teal-300 font-bold mt-0.5">৳{Number(item.total_revenue ?? 0).toLocaleString()} total revenue</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Row 2: Top Most Rated + Top Most Added Addon */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="p-5 rounded-2xl bg-slate-900/70 border border-amber-500/20">
+                      <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                        <Trophy className="w-3 h-3" /> Top Most Rated Foods
+                      </p>
+                      {stats.mostRatedFood.length === 0 ? (
+                        <p className="text-sm text-slate-500">No rating data yet</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {stats.mostRatedFood.map((item, i) => (
+                            <div key={item.id} className="flex gap-3 items-start">
+                              <span className="w-6 h-6 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px] font-extrabold flex items-center justify-center flex-shrink-0 mt-0.5">
+                                {i + 1}
+                              </span>
+                              {item.image_url && (
+                                <img src={item.image_url} alt={item.name} className="w-12 h-12 rounded-xl object-cover flex-shrink-0 border border-amber-500/20" />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-bold text-white truncate">{item.name}</p>
+                                <div className="flex items-center gap-1 mt-0.5">
+                                  <span className="text-amber-400 text-sm">★</span>
+                                  <span className="text-sm font-bold text-white">{Number(item.rating ?? 0).toFixed(1)}</span>
+                                  <span className="text-xs text-slate-400">({item.review_count} reviews)</span>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-0.5">৳{Number(item.sale_price ?? 0).toLocaleString()} / item</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-5 rounded-2xl bg-slate-900/70 border border-violet-500/20">
+                      <p className="text-[10px] font-bold text-violet-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3" /> Top Most Added Add-ons
+                      </p>
+                      {stats.mostAddedAddon.length === 0 ? (
+                        <p className="text-sm text-slate-500">No add-on data yet</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {stats.mostAddedAddon.map((addon, i) => (
+                            <div key={addon.addon_id} className="flex gap-3 items-start">
+                              <span className="w-6 h-6 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-300 text-[11px] font-extrabold flex items-center justify-center flex-shrink-0 mt-0.5">
+                                {i + 1}
+                              </span>
+                              <div className="w-12 h-12 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
+                                <TrendingUp className="w-5 h-5 text-violet-400" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-bold text-white truncate">{addon.name}</p>
+                                <p className="text-xs text-slate-400 mt-0.5 truncate">From: {addon.food_name || '—'}</p>
+                                <p className="text-xs text-violet-300 font-semibold mt-0.5">Added {addon.times_added} times · ৳{Number(addon.price ?? 0).toLocaleString()}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Row 3: Top Most Ordered Locations */}
+                  <div className="p-5 rounded-2xl bg-slate-900/70 border border-rose-500/20">
+                    <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mb-3 flex items-center gap-1">
+                      <Compass className="w-3 h-3" /> Top Most Ordered Locations
+                    </p>
+                    {stats.mostOrderedLocation.length === 0 ? (
+                      <p className="text-sm text-slate-500">No location data</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {stats.mostOrderedLocation.map((loc, i) => (
+                          <div key={loc.location} className="flex gap-3 items-center">
+                            <span className="w-6 h-6 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-[11px] font-extrabold flex items-center justify-center flex-shrink-0">
+                              {i + 1}
+                            </span>
+                            <div className="w-11 h-11 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center flex-shrink-0">
+                              <Compass className="w-5 h-5 text-rose-400" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-bold text-white truncate">{loc.location}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">
+                                {loc.order_count} orders · ৳{Number(loc.total_spent ?? 0).toLocaleString()} total spent
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )} {/* end stats tab */}
+
         </div>
       </main>
 

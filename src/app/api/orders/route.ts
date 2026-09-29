@@ -115,6 +115,20 @@ export async function POST(request: Request) {
     });
   } catch (error: any) {
     console.error('Error in /api/orders:', error);
+
+    // Surface stock / availability errors as actionable user messages
+    const msg: string = error?.message || '';
+    if (msg.startsWith('STOCK_ERROR:')) {
+      return NextResponse.json(
+        {
+          success: false,
+          stockError: true,
+          error: msg.replace('STOCK_ERROR:', '').trim(),
+        },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json(
       { success: false, error: 'Failed to place order. Please try again.' },
       { status: 500 }

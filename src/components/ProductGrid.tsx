@@ -18,6 +18,8 @@ interface ProductGridProps {
   selectedCategory: string;
   onSelectCategory: (cat: string) => void;
   onAddToCart: (item: FoodItem) => void;
+  selectedRestaurantIdProp?: number | null;
+  onSelectRestaurantIdProp?: (id: number | null) => void;
   refreshTrigger?: number;
 }
 
@@ -25,13 +27,27 @@ export default function ProductGrid({
   selectedCategory,
   onSelectCategory,
   onAddToCart,
+  selectedRestaurantIdProp,
+  onSelectRestaurantIdProp,
   refreshTrigger,
 }: ProductGridProps) {
   const [items, setItems] = useState<FoodItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [selectedRestaurantId, setSelectedRestaurantId] = useState<number | null>(null);
+  const [internalSelectedRestaurantId, setInternalSelectedRestaurantId] = useState<number | null>(null);
+
+  const selectedRestaurantId = selectedRestaurantIdProp !== undefined
+    ? selectedRestaurantIdProp
+    : internalSelectedRestaurantId;
+
+  const setSelectedRestaurantId = (id: number | null) => {
+    if (onSelectRestaurantIdProp) {
+      onSelectRestaurantIdProp(id);
+    } else {
+      setInternalSelectedRestaurantId(id);
+    }
+  };
 
   const categories = ['All', 'Burgers', 'Pizza', 'Desi Feast', 'Pasta', 'Beverages', 'Juice', 'Desserts'];
 

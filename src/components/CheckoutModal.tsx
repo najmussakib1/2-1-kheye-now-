@@ -45,6 +45,8 @@ export default function CheckoutModal() {
   // Status State
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Set when the API returns stockError:true — shows the dedicated "Order Failed" screen */
+  const [stockFailure, setStockFailure] = useState<string | null>(null);
   const [orderSuccess, setOrderSuccess] = useState<{
     orderId: number;
     name: string;
@@ -64,6 +66,7 @@ export default function CheckoutModal() {
       setOrderNotes('');
       setPaymentMethod('Cash on Delivery');
       setError(null);
+      setStockFailure(null);
       setOrderSuccess(null);
       setSaveAddressForFuture(false);
     }
@@ -138,6 +141,12 @@ export default function CheckoutModal() {
       const json = await res.json();
 
       if (!json.success) {
+        // Stock / availability failure → show dedicated failure screen
+        if (json.stockError) {
+          setStockFailure(json.error || 'One or more items in your order are out of stock.');
+          setSubmitting(false);
+          return;
+        }
         setError(json.error || 'Failed to place order. Please try again.');
         setSubmitting(false);
       } else {
@@ -187,32 +196,49 @@ export default function CheckoutModal() {
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-slate-950/80 backdrop-blur-md transition-opacity"
-        onClick={orderSuccess ? closeCheckoutModal : undefined}
+        onClick={(orderSuccess || stockFailure) ? closeCheckoutModal : undefined}
       />
 
       {/* Modal Container */}
       <div
-        className="relative z-10 w-full max-w-2xl max-h-[92vh] flex flex-col rounded-3xl overflow-hidden shadow-2xl border border-emerald-500/25 animate-in fade-in zoom-in-95 duration-200"
+        className={`relative z-10 w-full max-w-2xl max-h-[92vh] flex flex-col rounded-3xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200 ${
+          stockFailure
+            ? 'border border-rose-500/40'
+            : 'border border-emerald-500/25'
+        }`}
         style={{
           background: 'rgba(9, 13, 22, 0.96)',
           backdropFilter: 'blur(30px)',
           WebkitBackdropFilter: 'blur(30px)',
-          boxShadow: '0 25px 70px rgba(0,0,0,0.8), inset 0 1px 0 rgba(16,185,129,0.12)',
+          boxShadow: stockFailure
+            ? '0 25px 70px rgba(0,0,0,0.8), inset 0 1px 0 rgba(244,63,94,0.12)'
+            : '0 25px 70px rgba(0,0,0,0.8), inset 0 1px 0 rgba(16,185,129,0.12)',
         }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-emerald-500/20 bg-slate-950/50">
+        <div className={`flex items-center justify-between px-6 py-4 border-b bg-slate-950/50 ${
+          stockFailure ? 'border-rose-500/20' : 'border-emerald-500/20'
+        }`}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
-              <ShoppingBag className="w-5 h-5 text-emerald-400" />
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+              stockFailure
+                ? 'bg-rose-500/15 border border-rose-500/30'
+                : 'bg-emerald-500/15 border border-emerald-500/30'
+            }`}>
+              {stockFailure
+                ? <AlertCircle className="w-5 h-5 text-rose-400" />
+                : <ShoppingBag className="w-5 h-5 text-emerald-400" />
+              }
             </div>
             <div>
               <h2 className="text-lg font-bold text-white leading-tight">
-                {orderSuccess ? 'Order Confirmation' : 'Place Your Order'}
+                {orderSuccess ? 'Order Confirmation' : stockFailure ? 'Order Failed' : 'Place Your Order'}
               </h2>
               <p className="text-xs text-slate-400">
                 {orderSuccess
                   ? 'Thank you! Your order is being processed.'
+                  : stockFailure
+                  ? 'Your order could not be placed due to a stock issue.'
                   : `${checkoutItems.length} item${checkoutItems.length !== 1 ? 's' : ''} • Express Delivery in 25-35 mins`}
               </p>
             </div>
@@ -227,12 +253,74 @@ export default function CheckoutModal() {
 
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          {orderSuccess ? (
+          {stockFailure ? (
+            /* ORDER FAILED — STOCK / AVAILABILITY ERROR VIEW */
+            <div className="py-6 flex flex-col items-center text-center space-y-6 animate-in fade-in zoom-in-95 duration-300">
+              {/* Failure icon */}
+              <div className="relative">
+                <div className="w-20 h-20 rounded-full bg-rose-500/15 border-2 border-rose-400 flex items-center justify-center shadow-[0_0_30px_rgba(244,63,94,0.35)]">
+                  <AlertCircle className="w-10 h-10 text-rose-400" />
+                </div>
+                <div className="absolute -top-1 -right-1 p-1.5 rounded-full bg-slate-950 border border-rose-400 text-rose-400">
+                  <X className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
+              <div>
+                <span className="px-3.5 py-1 rounded-full text-xs font-bold bg-rose-500/15 border border-rose-500/30 text-rose-300">
+                  Order Not Placed
+                </span>
+                <h3 className="text-2xl font-black text-white mt-3">
+                  Order Failed — Stock Issue
+                </h3>
+                <p className="text-sm text-slate-400 mt-1.5 max-w-md">
+                  Your order could not be completed. No charges were made.
+                </p>
+              </div>
+
+              {/* Specific error message card */}
+              <div className="w-full bg-rose-500/10 border border-rose-500/30 rounded-2xl p-5 text-left space-y-2">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 p-1.5 rounded-lg bg-rose-500/20 flex-shrink-0">
+                    <AlertCircle className="w-4 h-4 text-rose-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-rose-300 uppercase tracking-wide mb-1">
+                      Reason for Failure
+                    </p>
+                    <p className="text-sm text-white font-medium leading-relaxed">
+                      {stockFailure}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-500 max-w-sm">
+                Please update the quantity in your cart or remove the unavailable item, then try placing your order again.
+              </p>
+
+              {/* Action buttons */}
+              <div className="w-full flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => setStockFailure(null)}
+                  className="flex-1 py-3.5 rounded-2xl font-bold text-white text-sm bg-gradient-to-r from-rose-500/20 to-rose-600/20 hover:from-rose-500/40 hover:to-rose-600/40 border border-rose-500/40 transition-all"
+                >
+                  ← Go Back &amp; Edit Order
+                </button>
+                <button
+                  onClick={closeCheckoutModal}
+                  className="flex-1 py-3.5 rounded-2xl font-bold text-slate-950 text-sm bg-gradient-to-r from-slate-300 to-slate-200 hover:from-white hover:to-slate-100 transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          ) : orderSuccess ? (
             /* ORDER SUCCESS VIEW */
             <div className="py-6 flex flex-col items-center text-center space-y-6 animate-in fade-in zoom-in-95 duration-300">
               <div className="relative">
                 <div className="w-20 h-20 rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center shadow-[0_0_30px_rgba(16,185,129,0.5)]">
-                  <Check className="w-10 h-10 text-emerald-400 stroke-[3]" />
+                  <CheckCircle2 className="w-10 h-10 text-emerald-400" />
                 </div>
                 <div className="absolute -top-1 -right-1 p-1.5 rounded-full bg-slate-950 border border-emerald-400 text-emerald-400">
                   <Sparkles className="w-3.5 h-3.5" />
@@ -287,7 +375,7 @@ export default function CheckoutModal() {
                 onClick={closeCheckoutModal}
                 className="w-full py-3.5 rounded-2xl font-bold text-slate-950 text-sm bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 transition-all shadow-[0_0_20px_rgba(16,185,129,0.35)]"
               >
-                Done & Continue Browsing
+                Done &amp; Continue Browsing
               </button>
             </div>
           ) : (
@@ -360,7 +448,7 @@ export default function CheckoutModal() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase tracking-wider">
                     <User className="w-3.5 h-3.5" />
-                    <span>Customer & Delivery Details</span>
+                    <span>Customer &amp; Delivery Details</span>
                   </div>
                   <span className="text-[11px] text-slate-400">Auto-filled • Editable</span>
                 </div>
@@ -554,7 +642,7 @@ export default function CheckoutModal() {
                   ) : (
                     <>
                       <ShieldCheck className="w-4 h-4" />
-                      <span>Confirm & Place Order (৳{grandTotal})</span>
+                      <span>Confirm &amp; Place Order (৳{grandTotal})</span>
                       <ArrowRight className="w-4 h-4" />
                     </>
                   )}

@@ -35,10 +35,10 @@ export function sp_place_order(db: Database.Database, input: CreateOrderInput): 
           throw new Error(`Procedure sp_place_order error: Food item #${item.food_id} not found.`);
         }
         if (!food.is_available || (food.stock !== null && food.stock !== undefined && Number(food.stock) <= 0)) {
-          throw new Error(`Procedure sp_place_order error: "${food.name}" is out of stock.`);
+          throw new Error(`STOCK_ERROR: "${food.name}" is currently out of stock and cannot be ordered.`);
         }
         if (food.stock !== null && food.stock !== undefined && Number(food.stock) < item.quantity) {
-          throw new Error(`Procedure sp_place_order error: "${food.name}" only has ${food.stock} left in stock.`);
+          throw new Error(`STOCK_ERROR: "${food.name}" only has ${food.stock} unit${food.stock === 1 ? '' : 's'} left in stock, but you ordered ${item.quantity}. Please reduce the quantity and try again.`);
         }
       }
     }

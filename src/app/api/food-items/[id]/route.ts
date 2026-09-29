@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getFoodItemByIdFromDb, getSimilarFoodItemsFromDb } from '@/lib/db';
+import {
+  getMostOrderedItemsByRestaurant,
+  getMostRatedItemsByRestaurant,
+  getMostAddedAddonsForFood,
+} from '@/lib/complex-queries';
 
 export async function GET(
   request: Request,
@@ -19,11 +24,18 @@ export async function GET(
     }
 
     const similarItems = getSimilarFoodItemsFromDb(itemId, item.category, 5);
+    const restaurantId = item.restaurant_id ?? 0;
+    const mostOrderedFromRestaurant = restaurantId ? getMostOrderedItemsByRestaurant(restaurantId, itemId, 3) : [];
+    const mostRatedFromRestaurant = restaurantId ? getMostRatedItemsByRestaurant(restaurantId, itemId, 3) : [];
+    const suggestedAddons = getMostAddedAddonsForFood(itemId, 5);
 
     return NextResponse.json({
       success: true,
       data: item,
-      similarItems: similarItems,
+      similarItems,
+      mostOrderedFromRestaurant,
+      mostRatedFromRestaurant,
+      suggestedAddons,
     });
   } catch (error: any) {
     console.error('API Error fetching product by ID:', error);
@@ -33,3 +45,4 @@ export async function GET(
     );
   }
 }
+

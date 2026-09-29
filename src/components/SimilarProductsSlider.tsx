@@ -8,17 +8,29 @@ import { ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 interface SimilarProductsSliderProps {
   items: FoodItem[];
   onAddToCart: (item: FoodItem) => void;
+  title?: React.ReactNode;
+  badgeTitle?: string;
+  badgeColor?: 'emerald' | 'amber' | 'rose';
+  infinite?: boolean;
 }
 
-export default function SimilarProductsSlider({ items, onAddToCart }: SimilarProductsSliderProps) {
+export default function SimilarProductsSlider({
+  items,
+  onAddToCart,
+  title,
+  badgeTitle = 'Recommended for You',
+  badgeColor = 'emerald',
+  infinite = true,
+}: SimilarProductsSliderProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [isAutoScrolling, setIsAutoScrolling] = useState(true);
 
   // Duplicate items array to achieve smooth infinite looping effect
-  const displayItems = items.length > 0 ? [...items, ...items, ...items] : [];
+  const displayItems =
+    items.length > 0 && infinite ? [...items, ...items, ...items] : items;
 
   useEffect(() => {
-    if (!isAutoScrolling || items.length === 0) return;
+    if (!infinite || !isAutoScrolling || items.length === 0) return;
 
     const interval = setInterval(() => {
       if (scrollContainerRef.current) {
@@ -33,7 +45,7 @@ export default function SimilarProductsSlider({ items, onAddToCart }: SimilarPro
     }, 3500);
 
     return () => clearInterval(interval);
-  }, [isAutoScrolling, items]);
+  }, [infinite, isAutoScrolling, items]);
 
   const handleScrollLeft = () => {
     if (scrollContainerRef.current) {
@@ -55,13 +67,25 @@ export default function SimilarProductsSlider({ items, onAddToCart }: SimilarPro
       {/* Navigation Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2">
+          <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-2 border ${
+            badgeColor === 'amber'
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+              : badgeColor === 'rose'
+              ? 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+              : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+          }`}>
             <Sparkles className="w-3 h-3" />
-            <span>Recommended for You</span>
+            <span>{badgeTitle}</span>
           </div>
-          <h3 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            Similar <span className="text-emerald-400">Food Items</span>
-          </h3>
+          {title ? (
+            <h3 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+              {title}
+            </h3>
+          ) : (
+            <h3 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+              Similar <span className="text-emerald-400">Food Items</span>
+            </h3>
+          )}
         </div>
 
         {/* Carousel Slider Control Arrows */}

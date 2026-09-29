@@ -885,7 +885,7 @@ export function executeTransaction<T>(db: Database.Database, operation: () => T)
   }
 }
 
-function formatFoodItem(row: any): FoodItem {
+export function formatFoodItem(row: any): FoodItem {
   let images: string[] = [];
   if (row.images_json) {
     try {

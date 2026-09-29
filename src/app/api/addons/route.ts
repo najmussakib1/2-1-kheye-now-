@@ -19,17 +19,23 @@ export async function GET(request: Request) {
 
     const foodId = Number(foodIdParam);
     const addons = getAddonsByFoodIdFromDb(foodId);
+    
+    // Include popularity/suggestions from complex queries
+    const { getMostAddedAddonsForFood } = await import('@/lib/complex-queries');
+    const mostAdded = getMostAddedAddonsForFood(foodId, 10);
 
     return NextResponse.json({
       success: true,
       data: addons,
       count: addons.length,
+      mostAdded,
     });
   } catch (error: any) {
     console.error('Error in /api/addons GET:', error);
     return NextResponse.json({ success: false, error: 'Failed to fetch add-ons' }, { status: 500 });
   }
 }
+
 
 // POST /api/addons -> Create a new add-on (Restaurant only)
 export async function POST(request: Request) {

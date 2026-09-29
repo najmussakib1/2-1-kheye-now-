@@ -32,6 +32,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
 
   const [item, setItem] = useState<FoodItem | null>(null);
   const [similarItems, setSimilarItems] = useState<FoodItem[]>([]);
+  const [mostOrderedFromRestaurant, setMostOrderedFromRestaurant] = useState<FoodItem[]>([]);
+  const [mostRatedFromRestaurant, setMostRatedFromRestaurant] = useState<FoodItem[]>([]);
+  const [suggestedAddonsMap, setSuggestedAddonsMap] = useState<Record<number, number>>({});
   const [addons, setAddons] = useState<FoodAddon[]>([]);
   const [selectedAddons, setSelectedAddons] = useState<FoodAddon[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,6 +56,16 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
         if (foodJson.success) {
           setItem(foodJson.data);
           setSimilarItems(foodJson.similarItems || []);
+          setMostOrderedFromRestaurant((foodJson.mostOrderedFromRestaurant || []).slice(0, 3));
+          setMostRatedFromRestaurant((foodJson.mostRatedFromRestaurant || []).slice(0, 3));
+          
+          if (foodJson.suggestedAddons && Array.isArray(foodJson.suggestedAddons)) {
+            const map: Record<number, number> = {};
+            foodJson.suggestedAddons.forEach((sa: any) => {
+              map[sa.addon_id] = sa.times_added;
+            });
+            setSuggestedAddonsMap(map);
+          }
         }
         if (addonJson.success) {
           setAddons(addonJson.data || []);
@@ -328,21 +341,25 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {addons.map((addon) => {
                       const isSelected = selectedAddons.some((a) => a.id === addon.id);
+                      const timesAdded = suggestedAddonsMap[addon.id] || 0;
+                      const isPopularAddon = timesAdded > 0;
 
                       return (
                         <button
                           key={addon.id}
                           type="button"
                           onClick={() => toggleAddon(addon)}
-                          className={`p-2.5 rounded-2xl border text-left flex items-center justify-between gap-3 transition-all duration-200 group ${
+                          className={`p-2.5 rounded-2xl border text-left flex items-center justify-between gap-3 transition-all duration-200 group relative ${
                             isSelected
                               ? 'bg-emerald-500/15 border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.25)]'
+                              : isPopularAddon
+                              ? 'bg-slate-900/80 border-amber-500/30 hover:border-amber-400/60'
                               : 'bg-slate-900/60 border-emerald-500/20 hover:border-emerald-500/40'
                           }`}
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
                             {/* Addon Picture Thumbnail */}
-                            <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-950 border border-emerald-500/30 flex-shrink-0">
+                            <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-950 border border-emerald-500/30 flex-shrink-0 relative">
                               {addon.image_url ? (
                                 <img src={addon.image_url} alt={addon.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
                               ) : (
@@ -353,7 +370,14 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                             </div>
 
                             <div className="min-w-0">
-                              <p className="text-xs font-bold text-white truncate">{addon.name}</p>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="text-xs font-bold text-white truncate">{addon.name}</p>
+                                {isPopularAddon && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                    ★ Most Added ({timesAdded})
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-xs font-black text-emerald-400 mt-0.5">+৳{addon.price}</p>
                             </div>
                           </div>
@@ -472,6 +496,42 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <SimilarProductsSlider
                 items={similarItems}
                 onAddToCart={(food) => handleAddToCart(food, 1)}
+              />
+            </div>
+          )}
+
+          {/* MOST ORDERED ITEMS FROM THIS RESTAURANT */}
+          {mostOrderedFromRestaurant.length > 0 && (
+            <div className="mt-16 pt-12 border-t border-emerald-500/20">
+              <SimilarProductsSlider
+                items={mostOrderedFromRestaurant}
+                onAddToCart={(food) => handleAddToCart(food, 1)}
+                infinite={false}
+                badgeTitle={`Chef's Best Sellers • ${item.restaurant_name || 'This Restaurant'}`}
+                badgeColor="amber"
+                title={
+                  <span>
+                    Most Ordered from <span className="text-amber-400">{item.restaurant_name || 'this Restaurant'}</span>
+                  </span>
+                }
+              />
+            </div>
+          )}
+
+          {/* MOST RATED FOOD ITEMS FROM THIS RESTAURANT */}
+          {mostRatedFromRestaurant.length > 0 && (
+            <div className="mt-16 pt-12 border-t border-emerald-500/20">
+              <SimilarProductsSlider
+                items={mostRatedFromRestaurant}
+                onAddToCart={(food) => handleAddToCart(food, 1)}
+                infinite={false}
+                badgeTitle={`Top Customer Favorites • ${item.restaurant_name || 'This Restaurant'}`}
+                badgeColor="rose"
+                title={
+                  <span>
+                    Highest Rated from <span className="text-rose-400">{item.restaurant_name || 'this Restaurant'}</span>
+                  </span>
+                }
               />
             </div>
           )}

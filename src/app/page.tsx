@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Navbar from '@/components/Navbar';
 import HeroSlider from '@/components/HeroSlider';
 import FeaturedFoodSection from '@/components/FeaturedFoodSection';
+import MostRatedRestaurantsSection from '@/components/MostRatedRestaurantsSection';
 import ProductGrid from '@/components/ProductGrid';
 import Footer from '@/components/Footer';
 import RatingPromptModal from '@/components/RatingPromptModal';
@@ -12,6 +13,7 @@ import { useApp } from '@/context/AppContext';
 
 export default function HomePage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [selectedRestaurantId, setSelectedRestaurantId] = useState<number | null>(null);
   const { addToCart, user, showToast } = useApp();
 
   // Rating Modal state
@@ -21,6 +23,19 @@ export default function HomePage() {
 
   const handleAddToCart = (item: FoodItem) => {
     addToCart(item, 1);
+  };
+
+  const handleSelectRestaurant = (restaurantId: number) => {
+    if (restaurantId === 0 || selectedRestaurantId === restaurantId) {
+      setSelectedRestaurantId(null);
+    } else {
+      setSelectedRestaurantId(restaurantId);
+      // Scroll down to menu section
+      const menuSection = document.getElementById('menu');
+      if (menuSection) {
+        menuSection.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
   };
 
   // Check for any unrated delivered order for the customer
@@ -90,11 +105,20 @@ export default function HomePage() {
           refreshTrigger={refreshKey}
         />
 
+        {/* Most Rated Restaurants According to Rating */}
+        <MostRatedRestaurantsSection
+          onSelectRestaurant={handleSelectRestaurant}
+          selectedRestaurantId={selectedRestaurantId}
+          refreshTrigger={refreshKey}
+        />
+
         {/* SQL Database Food Items Grid */}
         <ProductGrid
           selectedCategory={selectedCategory}
           onSelectCategory={(cat) => setSelectedCategory(cat)}
           onAddToCart={handleAddToCart}
+          selectedRestaurantIdProp={selectedRestaurantId}
+          onSelectRestaurantIdProp={(id) => setSelectedRestaurantId(id)}
           refreshTrigger={refreshKey}
         />
       </main>
