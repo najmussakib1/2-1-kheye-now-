@@ -1,6 +1,14 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import crypto from 'crypto';
+import {
+  sp_place_order,
+  sp_complete_order_delivery,
+  sp_cancel_order,
+  sp_update_food_stock,
+  sp_assign_rider,
+  sp_recalculate_restaurant_ratings,
+} from './procedures';
 
 export interface FoodItem {
   id: number;
@@ -9,6 +17,8 @@ export interface FoodItem {
   description: string;
   base_price: number;
   sale_price: number;
+  discount_percentage?: number;
+  stock_status?: string;
   is_available: number | boolean;
   stock?: number;
   category: string;
@@ -223,6 +233,91 @@ export interface PendingRatingOrder {
 }
 
 export * from './constants';
+export * from './procedures';
+
+// ============================================================
+// DATABASE USER-DEFINED FUNCTIONS (UDFs) & BUSINESS LOGIC
+// ============================================================
+
+/** Calculates discount percentage between base_price and sale_price */
+export function calculateDiscount(basePrice: number, salePrice: number): number {
+  const base = Number(basePrice);
+  const sale = Number(salePrice);
+  if (!base || base <= 0 || !sale || sale >= base) return 0;
+  return Math.round(((base - sale) / base) * 100);
+}
+
+/** Determines stock status string based on inventory level */
+export function getFoodStockStatus(stock?: number, isAvailable?: boolean | number): string {
+  const s = stock !== null && stock !== undefined ? Number(stock) : 50;
+  const avail = isAvailable ? 1 : 0;
+  if (!avail || s <= 0) return 'Out of Stock';
+  if (s <= 5) return 'Low Stock';
+  return 'In Stock';
+}
+
+/** Computes delivery fee based on delivery zone and total order amount (free delivery >= ৳1500) */
+export function calculateDeliveryFee(location?: string, totalAmount?: number): number {
+  const total = Number(totalAmount) || 0;
+  if (total >= 1500) return 0.00;
+  const loc = (location || '').trim().toLowerCase();
+  if (loc === 'dhanmondi') return 40.00;
+  if (loc === 'gulshan' || loc === 'banani') return 60.00;
+  if (loc === 'uttara' || loc === 'mirpur') return 70.00;
+  return 50.00;
+}
+
+/** Computes estimated delivery turnaround time */
+export function estimateDeliveryTime(location?: string, status?: string): string {
+  const s = (status || '').trim();
+  if (s === 'Delivered') return 'Delivered';
+  if (s === 'Cancelled') return 'Cancelled';
+  if (s === 'On the Way') return '15 - 25 mins';
+  if (s === 'Prepared') return '25 - 35 mins';
+  if (s === 'Preparing') return '35 - 45 mins';
+  return '40 - 55 mins';
+}
+
+/** Computes delivery rider commission (৳50.00 base + 2% bonus of order total) */
+export function calculateRiderCommission(totalAmount: number): number {
+  const total = Number(totalAmount) || 0;
+  return Math.round((50.00 + (total * 0.02)) * 100) / 100;
+}
+
+/** Formats structured receipt order summary string */
+export function formatOrderSummary(name: string, total: number, method?: string): string {
+  return `Order of ৳${Number(total || 0).toFixed(2)} for ${name || 'Guest'} (${method || 'Cash on Delivery'})`;
+}
+
+/**
+ * Registers custom User-Defined SQL Functions (UDFs) into SQLite engine.
+ * Allows these functions to be directly executed inside SQL SELECT, WHERE, and ORDER BY clauses.
+ */
+export function registerDatabaseFunctions(db: Database.Database) {
+  db.function('calculate_discount', { deterministic: true }, (basePrice: any, salePrice: any) => {
+    return calculateDiscount(Number(basePrice), Number(salePrice));
+  });
+
+  db.function('get_food_stock_status', { deterministic: true }, (stock: any, isAvailable: any) => {
+    return getFoodStockStatus(Number(stock), isAvailable);
+  });
+
+  db.function('calculate_delivery_fee', { deterministic: true }, (location: any, totalAmount: any) => {
+    return calculateDeliveryFee(String(location || ''), Number(totalAmount));
+  });
+
+  db.function('estimate_delivery_time', { deterministic: true }, (location: any, status: any) => {
+    return estimateDeliveryTime(String(location || ''), String(status || ''));
+  });
+
+  db.function('calculate_rider_commission', { deterministic: true }, (totalAmount: any) => {
+    return calculateRiderCommission(Number(totalAmount));
+  });
+
+  db.function('format_order_summary', { deterministic: true }, (name: any, total: any, method: any) => {
+    return formatOrderSummary(String(name || ''), Number(total), String(method || ''));
+  });
+}
 
 const DB_PATH = path.join(process.cwd(), 'kheye_now.db');
 
@@ -230,6 +325,7 @@ const DB_PATH = path.join(process.cwd(), 'kheye_now.db');
 export function getDb() {
   const db = new Database(DB_PATH, { verbose: process.env.NODE_ENV === 'development' ? console.log : undefined });
   db.pragma('foreign_keys = ON');
+  registerDatabaseFunctions(db);
   
   // Ensure tables exist
   db.exec(`
@@ -618,116 +714,117 @@ export function getDb() {
     `);
   } catch { }
 
-  // Seed default restaurant and food items if DB is empty
+  // Seed default restaurant and food items if DB is empty (Explicit Transaction: BEGIN -> COMMIT / ROLLBACK)
   try {
     const count = db.prepare('SELECT COUNT(*) as cnt FROM restaurants').get() as any;
     if (count.cnt === 0) {
-      // Generate scrypt password hash compatible with verifyPassword in auth.ts
-      const salt = crypto.randomBytes(16).toString('hex');
-      const derivedKey = crypto.scryptSync('123456', salt, 64);
-      const hash = `${salt}:${derivedKey.toString('hex')}`;
-
-      db.exec(`
-        INSERT INTO restaurants (id, name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, password_hash)
-        VALUES (1, 'basic_restaurant', 'Main Kitchen Master', 'basic_restaurant@kheyenow.com', '01700000000', 'Dhanmondi 27, Dhaka', NULL, 'Fast Food, Juice, Desi Feast, Burgers, Pizza, Pasta, Desserts, Beverages', 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&auto=format&fit=crop&q=80', '${hash}');
-      `);
-
-      const restId = 1;
-
-      const foods = [
-        {
-          name: 'Royal Kacchi Biryani',
-          desc: 'Authentic Dhaka style fragrant Basmati rice with tender mutton, potatoes, and signature spices.',
-          base: 450,
-          sale: 380,
-          cat: 'Desi Feast',
-          img: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Chittagong Beef Kala Bhuna',
-          desc: 'Traditional slow-cooked dark caramelized tender beef cooked with heritage spices & mustard oil.',
-          base: 480,
-          sale: 420,
-          cat: 'Desi Feast',
-          img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Special Beef Tehari',
-          desc: 'Mustard oil cooked tender beef chunks cooked with aromatic short-grain rice & green chillies.',
-          base: 320,
-          sale: 280,
-          cat: 'Desi Feast',
-          img: 'https://images.unsplash.com/photo-1633945274405-b6c8069047b0?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Smokey BBQ Smash Burger',
-          desc: 'Double juicy beef patties, melted cheddar, crispy bacon, caramelized onions & secret BBQ sauce.',
-          base: 350,
-          sale: 299,
-          cat: 'Burgers',
-          img: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Crispy Naga Chicken Burger',
-          desc: 'Super spicy naga pepper glazed fried chicken thigh patty, jalapenos, melted cheese & mayo.',
-          base: 310,
-          sale: 260,
-          cat: 'Burgers',
-          img: 'https://images.unsplash.com/photo-1625813506062-0aeb1d7a094b?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Truffle Mushroom Pizza',
-          desc: 'Hand-tossed sourdough pizza topped with wild mushrooms, truffle oil, mozzarella & fresh basil.',
-          base: 650,
-          sale: 549,
-          cat: 'Pizza',
-          img: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Ultimate Pepperoni Feast Pizza',
-          desc: 'Loaded with double pepperoni, mozzarella, parmesan and house marinara sauce.',
-          base: 690,
-          sale: 599,
-          cat: 'Pizza',
-          img: 'https://images.unsplash.com/photo-1628840042765-356cda07504e?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Creamy Alfredo Chicken Pasta',
-          desc: 'Fettuccine in rich garlic parmesan cream sauce with grilled chicken breast and herbs.',
-          base: 420,
-          sale: 360,
-          cat: 'Pasta',
-          img: 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Molten Lava Chocolate Cake',
-          desc: 'Warm chocolate cake with a molten chocolate center served with vanilla bean ice cream.',
-          base: 250,
-          sale: 199,
-          cat: 'Desserts',
-          img: 'https://images.unsplash.com/photo-1606313564200-e75d5e30476c?w=800&auto=format&fit=crop&q=80'
-        },
-        {
-          name: 'Mango Passionfruit Smoothie',
-          desc: 'Refreshing blended fresh mango, passionfruit pulp, Greek yogurt and honey.',
-          base: 180,
-          sale: 149,
-          cat: 'Juice',
-          img: 'https://images.unsplash.com/photo-1553530666-ba11a7da3888?w=800&auto=format&fit=crop&q=80'
-        },
-      ];
-
-      const insertFood = db.prepare(`
-        INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, images_json, is_available)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-      `);
-
-      for (const f of foods) {
-        insertFood.run(restId, f.name, f.desc, f.base, f.sale, f.cat, f.img, JSON.stringify([f.img]));
-      }
-
-      // Also seed an available Rider for deliveries
+      db.exec('BEGIN TRANSACTION');
       try {
+        // Generate scrypt password hash compatible with verifyPassword in auth.ts
+        const salt = crypto.randomBytes(16).toString('hex');
+        const derivedKey = crypto.scryptSync('123456', salt, 64);
+        const hash = `${salt}:${derivedKey.toString('hex')}`;
+
+        db.exec(`
+          INSERT INTO restaurants (id, name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, password_hash)
+          VALUES (1, 'basic_restaurant', 'Main Kitchen Master', 'basic_restaurant@kheyenow.com', '01700000000', 'Dhanmondi 27, Dhaka', NULL, 'Fast Food, Juice, Desi Feast, Burgers, Pizza, Pasta, Desserts, Beverages', 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&auto=format&fit=crop&q=80', '${hash}');
+        `);
+
+        const restId = 1;
+
+        const foods = [
+          {
+            name: 'Royal Kacchi Biryani',
+            desc: 'Authentic Dhaka style fragrant Basmati rice with tender mutton, potatoes, and signature spices.',
+            base: 450,
+            sale: 380,
+            cat: 'Desi Feast',
+            img: 'https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Chittagong Beef Kala Bhuna',
+            desc: 'Traditional slow-cooked dark caramelized tender beef cooked with heritage spices & mustard oil.',
+            base: 480,
+            sale: 420,
+            cat: 'Desi Feast',
+            img: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Special Beef Tehari',
+            desc: 'Mustard oil cooked tender beef chunks cooked with aromatic short-grain rice & green chillies.',
+            base: 320,
+            sale: 280,
+            cat: 'Desi Feast',
+            img: 'https://images.unsplash.com/photo-1633945274405-b6c8069047b0?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Smokey BBQ Smash Burger',
+            desc: 'Double juicy beef patties, melted cheddar, crispy bacon, caramelized onions & secret BBQ sauce.',
+            base: 350,
+            sale: 299,
+            cat: 'Burgers',
+            img: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Crispy Naga Chicken Burger',
+            desc: 'Super spicy naga pepper glazed fried chicken thigh patty, jalapenos, melted cheese & mayo.',
+            base: 310,
+            sale: 260,
+            cat: 'Burgers',
+            img: 'https://images.unsplash.com/photo-1625813506062-0aeb1d7a094b?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Truffle Mushroom Pizza',
+            desc: 'Hand-tossed sourdough pizza topped with wild mushrooms, truffle oil, mozzarella & fresh basil.',
+            base: 650,
+            sale: 549,
+            cat: 'Pizza',
+            img: 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Ultimate Pepperoni Feast Pizza',
+            desc: 'Loaded with double pepperoni, mozzarella, parmesan and house marinara sauce.',
+            base: 690,
+            sale: 599,
+            cat: 'Pizza',
+            img: 'https://images.unsplash.com/photo-1628840042765-356cda07504e?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Creamy Alfredo Chicken Pasta',
+            desc: 'Fettuccine in rich garlic parmesan cream sauce with grilled chicken breast and herbs.',
+            base: 420,
+            sale: 360,
+            cat: 'Pasta',
+            img: 'https://images.unsplash.com/photo-1551183053-bf91a1d81141?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Molten Lava Chocolate Cake',
+            desc: 'Warm chocolate cake with a molten chocolate center served with vanilla bean ice cream.',
+            base: 250,
+            sale: 199,
+            cat: 'Desserts',
+            img: 'https://images.unsplash.com/photo-1606313564200-e75d5e30476c?w=800&auto=format&fit=crop&q=80'
+          },
+          {
+            name: 'Mango Passionfruit Smoothie',
+            desc: 'Refreshing blended fresh mango, passionfruit pulp, Greek yogurt and honey.',
+            base: 180,
+            sale: 149,
+            cat: 'Juice',
+            img: 'https://images.unsplash.com/photo-1553530666-ba11a7da3888?w=800&auto=format&fit=crop&q=80'
+          },
+        ];
+
+        const insertFood = db.prepare(`
+          INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, images_json, is_available)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        `);
+
+        for (const f of foods) {
+          insertFood.run(restId, f.name, f.desc, f.base, f.sale, f.cat, f.img, JSON.stringify([f.img]));
+        }
+
+        // Also seed an available Rider for deliveries
         db.prepare(`
           INSERT OR IGNORE INTO riders (
             id, full_name, phone_number, email, vehicle_type, vehicle_number, driving_license, nid_number, address, location, avatar_url, status, total_deliveries, rating, earnings, password_hash
@@ -735,14 +832,57 @@ export function getDb() {
             1, 'Rahim Ahmed', '01800000000', 'rider@kheyenow.com', 'Motorcycle', 'Dhaka Metro-HA-11-2233', 'DL-882391024', '19962691234567890', 'Mirpur 10, Dhaka', 'Dhanmondi', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80', 'Available', 142, 4.95, 14250.00, '${hash}'
           )
         `).run();
-      } catch {}
+
+        // Explicit COMMIT upon completing all initial inserts
+        db.exec('COMMIT');
+      } catch (seedErr) {
+        // Explicit ROLLBACK if seeding encounters an error
+        if (db.inTransaction) {
+          db.exec('ROLLBACK');
+        }
+        console.error('Seed transaction rolled back due to error:', seedErr);
+      }
     }
   } catch (e) {
-    // seeding is optional, don't block init
-    console.error('Seed error:', e);
+    console.error('Seed check error:', e);
   }
 
   return db;
+}
+
+/**
+ * Executes a callback within an explicit database transaction.
+ * Employs explicit 'BEGIN TRANSACTION', 'COMMIT', and 'ROLLBACK' SQL statements.
+ * Supports nested operations using SQLite SAVEPOINTS.
+ */
+export function executeTransaction<T>(db: Database.Database, operation: () => T): T {
+  const isOuter = !db.inTransaction;
+  const savepoint = isOuter ? null : `sp_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+
+  if (isOuter) {
+    db.exec('BEGIN TRANSACTION');
+  } else {
+    db.exec(`SAVEPOINT ${savepoint}`);
+  }
+
+  try {
+    const result = operation();
+    if (isOuter) {
+      db.exec('COMMIT');
+    } else {
+      db.exec(`RELEASE SAVEPOINT ${savepoint}`);
+    }
+    return result;
+  } catch (error) {
+    if (isOuter) {
+      if (db.inTransaction) {
+        db.exec('ROLLBACK');
+      }
+    } else if (savepoint) {
+      db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    }
+    throw error;
+  }
 }
 
 function formatFoodItem(row: any): FoodItem {
@@ -763,9 +903,15 @@ function formatFoodItem(row: any): FoodItem {
   const stock = row.stock !== undefined && row.stock !== null ? Number(row.stock) : 50;
   // If stock is 0 or less, ensure is_available reflects stock-out
   const is_available = stock <= 0 ? 0 : (row.is_available ? 1 : 0);
+  const discount_percentage = row.discount_percentage !== undefined
+    ? Number(row.discount_percentage)
+    : calculateDiscount(row.base_price, row.sale_price);
+  const stock_status = row.stock_status || getFoodStockStatus(stock, is_available);
 
   return {
     ...row,
+    discount_percentage,
+    stock_status,
     stock,
     is_available,
     images,
@@ -773,12 +919,16 @@ function formatFoodItem(row: any): FoodItem {
   };
 }
 
-// SQL Query method to get all food items or filter by category, restaurant, or search term
+// SQL Query method to get all food items (using database UDFs calculate_discount and get_food_stock_status)
 export function getFoodItemsFromDb(category?: string, restaurantId?: number, search?: string): FoodItem[] {
   const db = getDb();
   try {
     let query = `
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price,
+             calculate_discount(f.base_price, f.sale_price) AS discount_percentage,
+             get_food_stock_status(f.stock, f.is_available) AS stock_status,
+             f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at,
+             r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE 1=1
@@ -809,12 +959,16 @@ export function getFoodItemsFromDb(category?: string, restaurantId?: number, sea
   }
 }
 
-// SQL Query method to get a single food item by ID
+// SQL Query method to get a single food item by ID (using database UDFs)
 export function getFoodItemByIdFromDb(id: number): FoodItem | null {
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price,
+             calculate_discount(f.base_price, f.sale_price) AS discount_percentage,
+             get_food_stock_status(f.stock, f.is_available) AS stock_status,
+             f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at,
+             r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE f.id = ?
@@ -826,12 +980,16 @@ export function getFoodItemByIdFromDb(id: number): FoodItem | null {
   }
 }
 
-// SQL Query method to get 5 similar products (same category or popular)
+// SQL Query method to get 5 similar products (same category or popular) (using database UDFs)
 export function getSimilarFoodItemsFromDb(currentId: number, category: string, limit = 5): FoodItem[] {
   const db = getDb();
   try {
     const stmt = db.prepare(`
-      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
+      SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price,
+             calculate_discount(f.base_price, f.sale_price) AS discount_percentage,
+             get_food_stock_status(f.stock, f.is_available) AS stock_status,
+             f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at,
+             r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
       FROM food_items f
       LEFT JOIN restaurants r ON f.restaurant_id = r.id
       WHERE f.id != ? AND (f.category = ? OR 1=1)
@@ -845,7 +1003,7 @@ export function getSimilarFoodItemsFromDb(currentId: number, category: string, l
   }
 }
 
-// Add a new food item for a restaurant (supports multiple images and stock)
+// Add a new food item for a restaurant (Explicit Transaction: BEGIN -> COMMIT / ROLLBACK)
 export function createFoodItemInDb(item: {
   restaurant_id: number;
   name: string;
@@ -861,52 +1019,54 @@ export function createFoodItemInDb(item: {
 }): FoodItem {
   const db = getDb();
   try {
-    const imagesList = item.images && item.images.length > 0
-      ? item.images
-      : item.image_url ? [item.image_url] : [];
-    const imagesJson = item.images_json || JSON.stringify(imagesList);
-    const coverImage = imagesList[0] || item.image_url || '';
-    const initialStock = item.stock !== undefined ? Number(item.stock) : 50;
-    const isAvailable = initialStock <= 0 ? 0 : (item.is_available !== undefined ? (item.is_available ? 1 : 0) : 1);
+    return executeTransaction(db, () => {
+      const imagesList = item.images && item.images.length > 0
+        ? item.images
+        : item.image_url ? [item.image_url] : [];
+      const imagesJson = item.images_json || JSON.stringify(imagesList);
+      const coverImage = imagesList[0] || item.image_url || '';
+      const initialStock = item.stock !== undefined ? Number(item.stock) : 50;
+      const isAvailable = initialStock <= 0 ? 0 : (item.is_available !== undefined ? (item.is_available ? 1 : 0) : 1);
 
-    const stmt = db.prepare(`
-      INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, images_json, is_available, stock)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const info = stmt.run(
-      item.restaurant_id,
-      item.name.trim(),
-      item.description?.trim() || null,
-      item.base_price,
-      item.sale_price,
-      item.category || 'Fast Food',
-      coverImage || null,
-      imagesJson,
-      isAvailable,
-      initialStock
-    );
+      const stmt = db.prepare(`
+        INSERT INTO food_items (restaurant_id, name, description, base_price, sale_price, category, image_url, images_json, is_available, stock)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const info = stmt.run(
+        item.restaurant_id,
+        item.name.trim(),
+        item.description?.trim() || null,
+        item.base_price,
+        item.sale_price,
+        item.category || 'Fast Food',
+        coverImage || null,
+        imagesJson,
+        isAvailable,
+        initialStock
+      );
 
-    return {
-      id: info.lastInsertRowid as number,
-      restaurant_id: item.restaurant_id,
-      name: item.name,
-      description: item.description || '',
-      base_price: item.base_price,
-      sale_price: item.sale_price,
-      category: item.category,
-      image_url: coverImage,
-      images: imagesList,
-      images_json: imagesJson,
-      is_available: Boolean(isAvailable),
-      stock: initialStock,
-      rating: 4.8,
-    };
+      return {
+        id: info.lastInsertRowid as number,
+        restaurant_id: item.restaurant_id,
+        name: item.name,
+        description: item.description || '',
+        base_price: item.base_price,
+        sale_price: item.sale_price,
+        category: item.category,
+        image_url: coverImage,
+        images: imagesList,
+        images_json: imagesJson,
+        is_available: Boolean(isAvailable),
+        stock: initialStock,
+        rating: 4.8,
+      };
+    });
   } finally {
     db.close();
   }
 }
 
-// Update food item in DB (supports editing all details, multiple images, and stock)
+// Update food item in DB (Explicit Transaction: BEGIN -> COMMIT / ROLLBACK)
 export function updateFoodItemInDb(
   itemId: number,
   restaurantId: number,
@@ -925,89 +1085,101 @@ export function updateFoodItemInDb(
 ): FoodItem | null {
   const db = getDb();
   try {
-    const current = db.prepare('SELECT * FROM food_items WHERE id = ? AND restaurant_id = ?').get(itemId, restaurantId) as any;
-    if (!current) return null;
+    return executeTransaction(db, () => {
+      const current = db.prepare('SELECT * FROM food_items WHERE id = ? AND restaurant_id = ?').get(itemId, restaurantId) as any;
+      if (!current) return null;
 
-    let imagesList = updates.images;
-    let imagesJson = updates.images_json;
-    if (imagesList && imagesList.length > 0) {
-      imagesJson = JSON.stringify(imagesList);
-    } else if (imagesJson) {
-      try {
-        imagesList = JSON.parse(imagesJson);
-      } catch {
-        imagesList = [];
+      let imagesList = updates.images;
+      let imagesJson = updates.images_json;
+      if (imagesList && imagesList.length > 0) {
+        imagesJson = JSON.stringify(imagesList);
+      } else if (imagesJson) {
+        try {
+          imagesList = JSON.parse(imagesJson);
+        } catch {
+          imagesList = [];
+        }
+      } else if (updates.image_url) {
+        imagesList = [updates.image_url];
+        imagesJson = JSON.stringify(imagesList);
+      } else {
+        const fallbackJson = current.images_json || '[]';
+        imagesJson = fallbackJson;
+        try {
+          imagesList = JSON.parse(fallbackJson);
+        } catch {
+          imagesList = current.image_url ? [current.image_url] : [];
+        }
       }
-    } else if (updates.image_url) {
-      imagesList = [updates.image_url];
-      imagesJson = JSON.stringify(imagesList);
-    } else {
-      const fallbackJson = current.images_json || '[]';
-      imagesJson = fallbackJson;
-      try {
-        imagesList = JSON.parse(fallbackJson);
-      } catch {
-        imagesList = current.image_url ? [current.image_url] : [];
+
+      const coverImage = (imagesList && imagesList.length > 0) ? imagesList[0] : (updates.image_url ?? current.image_url);
+
+      const name = updates.name !== undefined ? updates.name.trim() : current.name;
+      const description = updates.description !== undefined ? updates.description.trim() : current.description;
+      const base_price = updates.base_price !== undefined ? updates.base_price : current.base_price;
+      const sale_price = updates.sale_price !== undefined ? updates.sale_price : current.sale_price;
+      const category = updates.category !== undefined ? updates.category.trim() : current.category;
+      const stock = updates.stock !== undefined ? Number(updates.stock) : (current.stock !== undefined && current.stock !== null ? Number(current.stock) : 50);
+      
+      let is_available: number;
+      if (stock <= 0) {
+        is_available = 0;
+      } else if (updates.is_available !== undefined) {
+        is_available = updates.is_available ? 1 : 0;
+      } else {
+        is_available = current.is_available ? 1 : 0;
       }
-    }
 
-    const coverImage = (imagesList && imagesList.length > 0) ? imagesList[0] : (updates.image_url ?? current.image_url);
+      const stmt = db.prepare(`
+        UPDATE food_items
+        SET name = ?, description = ?, base_price = ?, sale_price = ?, category = ?, image_url = ?, images_json = ?, is_available = ?, stock = ?
+        WHERE id = ? AND restaurant_id = ?
+      `);
+      stmt.run(name, description, base_price, sale_price, category, coverImage, imagesJson, is_available, stock, itemId, restaurantId);
 
-    const name = updates.name !== undefined ? updates.name.trim() : current.name;
-    const description = updates.description !== undefined ? updates.description.trim() : current.description;
-    const base_price = updates.base_price !== undefined ? updates.base_price : current.base_price;
-    const sale_price = updates.sale_price !== undefined ? updates.sale_price : current.sale_price;
-    const category = updates.category !== undefined ? updates.category.trim() : current.category;
-    const stock = updates.stock !== undefined ? Number(updates.stock) : (current.stock !== undefined && current.stock !== null ? Number(current.stock) : 50);
-    // If stock is 0 or less, auto-set is_available to 0
-    let is_available: number;
-    if (stock <= 0) {
-      is_available = 0;
-    } else if (updates.is_available !== undefined) {
-      is_available = updates.is_available ? 1 : 0;
-    } else {
-      is_available = current.is_available ? 1 : 0;
-    }
-
-    const stmt = db.prepare(`
-      UPDATE food_items
-      SET name = ?, description = ?, base_price = ?, sale_price = ?, category = ?, image_url = ?, images_json = ?, is_available = ?, stock = ?
-      WHERE id = ? AND restaurant_id = ?
-    `);
-    stmt.run(name, description, base_price, sale_price, category, coverImage, imagesJson, is_available, stock, itemId, restaurantId);
-
-    return getFoodItemByIdFromDb(itemId);
+      const updatedRow = db.prepare(`
+        SELECT f.id, f.restaurant_id, f.name, f.description, f.base_price, f.sale_price, f.is_available, f.stock, f.category, f.rating, f.image_url, f.images_json, f.created_at, r.name as restaurant_name, r.image_url as restaurant_logo, r.rating as restaurant_rating 
+        FROM food_items f
+        LEFT JOIN restaurants r ON f.restaurant_id = r.id
+        WHERE f.id = ?
+      `).get(itemId);
+      return updatedRow ? formatFoodItem(updatedRow) : null;
+    });
   } finally {
     db.close();
   }
 }
 
-// Update food item availability
+// Update food item availability (Explicit Transaction: BEGIN -> COMMIT / ROLLBACK)
 export function updateFoodItemAvailabilityInDb(itemId: number, restaurantId: number, isAvailable: boolean): boolean {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      UPDATE food_items 
-      SET is_available = ? 
-      WHERE id = ? AND restaurant_id = ?
-    `);
-    const info = stmt.run(isAvailable ? 1 : 0, itemId, restaurantId);
-    return info.changes > 0;
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        UPDATE food_items 
+        SET is_available = ? 
+        WHERE id = ? AND restaurant_id = ?
+      `);
+      const info = stmt.run(isAvailable ? 1 : 0, itemId, restaurantId);
+      return info.changes > 0;
+    });
   } finally {
     db.close();
   }
 }
 
-// Delete food item for a restaurant
+// Delete food item for a restaurant (Explicit Transaction: BEGIN -> COMMIT / ROLLBACK)
 export function deleteFoodItemInDb(itemId: number, restaurantId: number): boolean {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      DELETE FROM food_items 
-      WHERE id = ? AND restaurant_id = ?
-    `);
-    const info = stmt.run(itemId, restaurantId);
-    return info.changes > 0;
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        DELETE FROM food_items 
+        WHERE id = ? AND restaurant_id = ?
+      `);
+      const info = stmt.run(itemId, restaurantId);
+      return info.changes > 0;
+    });
   } finally {
     db.close();
   }
@@ -1028,29 +1200,31 @@ export function createUserInDb(user: {
 }): SafeUser {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      INSERT INTO users (full_name, phone_number, email, address, gender, avatar_url, password_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    const info = stmt.run(
-      user.full_name,
-      user.phone_number,
-      user.email.toLowerCase(),
-      user.address || null,
-      user.gender || null,
-      user.avatar_url || null,
-      user.password_hash
-    );
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        INSERT INTO users (full_name, phone_number, email, address, gender, avatar_url, password_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const info = stmt.run(
+        user.full_name,
+        user.phone_number,
+        user.email.toLowerCase(),
+        user.address || null,
+        user.gender || null,
+        user.avatar_url || null,
+        user.password_hash
+      );
 
-    return {
-      id: info.lastInsertRowid as number,
-      full_name: user.full_name,
-      phone_number: user.phone_number,
-      email: user.email.toLowerCase(),
-      address: user.address,
-      gender: user.gender,
-      avatar_url: user.avatar_url,
-    };
+      return {
+        id: info.lastInsertRowid as number,
+        full_name: user.full_name,
+        phone_number: user.phone_number,
+        email: user.email.toLowerCase(),
+        address: user.address,
+        gender: user.gender,
+        avatar_url: user.avatar_url,
+      };
+    });
   } finally {
     db.close();
   }
@@ -1096,37 +1270,44 @@ export function updateUserProfileInDb(userId: number, data: {
 }): SafeUser | null {
   const db = getDb();
   try {
-    const updates: string[] = [];
-    const params: any[] = [];
+    return executeTransaction(db, () => {
+      const updates: string[] = [];
+      const params: any[] = [];
 
-    if (data.full_name !== undefined) {
-      updates.push('full_name = ?');
-      params.push(data.full_name.trim());
-    }
-    if (data.phone_number !== undefined) {
-      updates.push('phone_number = ?');
-      params.push(data.phone_number.trim());
-    }
-    if (data.address !== undefined) {
-      updates.push('address = ?');
-      params.push(data.address.trim());
-    }
-    if (data.gender !== undefined) {
-      updates.push('gender = ?');
-      params.push(data.gender);
-    }
-    if (data.avatar_url !== undefined) {
-      updates.push('avatar_url = ?');
-      params.push(data.avatar_url);
-    }
+      if (data.full_name !== undefined) {
+        updates.push('full_name = ?');
+        params.push(data.full_name.trim());
+      }
+      if (data.phone_number !== undefined) {
+        updates.push('phone_number = ?');
+        params.push(data.phone_number.trim());
+      }
+      if (data.address !== undefined) {
+        updates.push('address = ?');
+        params.push(data.address.trim());
+      }
+      if (data.gender !== undefined) {
+        updates.push('gender = ?');
+        params.push(data.gender);
+      }
+      if (data.avatar_url !== undefined) {
+        updates.push('avatar_url = ?');
+        params.push(data.avatar_url);
+      }
 
-    if (updates.length === 0) return findUserByIdFromDb(userId);
+      if (updates.length > 0) {
+        params.push(userId);
+        const stmt = db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`);
+        stmt.run(...params);
+      }
 
-    params.push(userId);
-    const stmt = db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`);
-    stmt.run(...params);
-
-    return findUserByIdFromDb(userId);
+      const user = db.prepare(`
+        SELECT id, full_name, phone_number, email, address, gender, avatar_url, created_at 
+        FROM users 
+        WHERE id = ?
+      `).get(userId);
+      return (user as SafeUser) || null;
+    });
   } finally {
     db.close();
   }
@@ -1135,12 +1316,14 @@ export function updateUserProfileInDb(userId: number, data: {
 export function updateUserAddressInDb(userId: number, address: string): void {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      UPDATE users 
-      SET address = ? 
-      WHERE id = ?
-    `);
-    stmt.run(address.trim(), userId);
+    executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        UPDATE users 
+        SET address = ? 
+        WHERE id = ?
+      `);
+      stmt.run(address.trim(), userId);
+    });
   } finally {
     db.close();
   }
@@ -1163,34 +1346,36 @@ export function createRestaurantInDb(rest: {
 }): SafeRestaurant {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      INSERT INTO restaurants (name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, password_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const info = stmt.run(
-      rest.name.trim(),
-      rest.owner_name.trim(),
-      rest.email.toLowerCase().trim(),
-      rest.phone_number.trim(),
-      rest.address.trim(),
-      rest.trade_licence_url || null,
-      rest.categories || 'Fast Food, Juice',
-      rest.image_url || null,
-      rest.password_hash
-    );
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        INSERT INTO restaurants (name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, password_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const info = stmt.run(
+        rest.name.trim(),
+        rest.owner_name.trim(),
+        rest.email.toLowerCase().trim(),
+        rest.phone_number.trim(),
+        rest.address.trim(),
+        rest.trade_licence_url || null,
+        rest.categories || 'Fast Food, Juice',
+        rest.image_url || null,
+        rest.password_hash
+      );
 
-    return {
-      id: info.lastInsertRowid as number,
-      name: rest.name,
-      owner_name: rest.owner_name,
-      email: rest.email.toLowerCase(),
-      phone_number: rest.phone_number,
-      address: rest.address,
-      trade_licence_url: rest.trade_licence_url,
-      categories: rest.categories,
-      image_url: rest.image_url,
-      rating: 4.8,
-    };
+      return {
+        id: info.lastInsertRowid as number,
+        name: rest.name,
+        owner_name: rest.owner_name,
+        email: rest.email.toLowerCase(),
+        phone_number: rest.phone_number,
+        address: rest.address,
+        trade_licence_url: rest.trade_licence_url,
+        categories: rest.categories,
+        image_url: rest.image_url,
+        rating: 4.8,
+      };
+    });
   } finally {
     db.close();
   }
@@ -1241,24 +1426,35 @@ export function updateRestaurantProfileInDb(
 ): SafeRestaurant | null {
   const db = getDb();
   try {
-    const current = findRestaurantByIdFromDb(id);
-    if (!current) return null;
+    return executeTransaction(db, () => {
+      const current = db.prepare(`
+        SELECT id, name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, rating, created_at 
+        FROM restaurants 
+        WHERE id = ?
+      `).get(id) as SafeRestaurant | undefined;
+      if (!current) return null;
 
-    const name = updates.name !== undefined ? updates.name.trim() : current.name;
-    const owner_name = updates.owner_name !== undefined ? updates.owner_name.trim() : current.owner_name;
-    const phone_number = updates.phone_number !== undefined ? updates.phone_number.trim() : current.phone_number;
-    const address = updates.address !== undefined ? updates.address.trim() : current.address;
-    const categories = updates.categories !== undefined ? updates.categories.trim() : current.categories;
-    const image_url = updates.image_url !== undefined ? updates.image_url.trim() : (current.image_url || null);
+      const name = updates.name !== undefined ? updates.name.trim() : current.name;
+      const owner_name = updates.owner_name !== undefined ? updates.owner_name.trim() : current.owner_name;
+      const phone_number = updates.phone_number !== undefined ? updates.phone_number.trim() : current.phone_number;
+      const address = updates.address !== undefined ? updates.address.trim() : current.address;
+      const categories = updates.categories !== undefined ? updates.categories.trim() : current.categories;
+      const image_url = updates.image_url !== undefined ? updates.image_url.trim() : (current.image_url || null);
 
-    const stmt = db.prepare(`
-      UPDATE restaurants
-      SET name = ?, owner_name = ?, phone_number = ?, address = ?, categories = ?, image_url = ?
-      WHERE id = ?
-    `);
-    stmt.run(name, owner_name, phone_number, address, categories, image_url, id);
+      const stmt = db.prepare(`
+        UPDATE restaurants
+        SET name = ?, owner_name = ?, phone_number = ?, address = ?, categories = ?, image_url = ?
+        WHERE id = ?
+      `);
+      stmt.run(name, owner_name, phone_number, address, categories, image_url, id);
 
-    return findRestaurantByIdFromDb(id);
+      const updated = db.prepare(`
+        SELECT id, name, owner_name, email, phone_number, address, trade_licence_url, categories, image_url, rating, created_at 
+        FROM restaurants 
+        WHERE id = ?
+      `).get(id);
+      return (updated as SafeRestaurant) || null;
+    });
   } finally {
     db.close();
   }
@@ -1304,89 +1500,11 @@ export function checkStockForOrderItems(items: { food_id?: number; quantity: num
   }
 }
 
+// Create order via stored procedure sp_place_order with explicit transaction control (BEGIN -> COMMIT / ROLLBACK)
 export function createOrderInDb(input: CreateOrderInput): { orderId: number } {
   const db = getDb();
   try {
-    const insertOrderTx = db.transaction(() => {
-      // Derive restaurant_id from the first food item in the order
-      let restaurantId: number | null = null;
-      if (input.items && input.items.length > 0) {
-        const firstFoodId = input.items[0].food_id;
-        if (firstFoodId) {
-          const food = db.prepare('SELECT restaurant_id FROM food_items WHERE id = ?').get(firstFoodId) as any;
-          if (food) restaurantId = food.restaurant_id;
-        }
-      }
-
-      const orderStmt = db.prepare(`
-        INSERT INTO orders (user_id, rider_id, restaurant_id, customer_name, phone_number, delivery_address, delivery_location, total_amount, payment_method, order_notes, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Preparing')
-      `);
-      
-      const orderResult = orderStmt.run(
-        input.user_id || null,
-        input.rider_id || null,
-        restaurantId,
-        input.customer_name.trim(),
-        input.phone_number.trim(),
-        input.delivery_address.trim(),
-        input.delivery_location || 'Dhanmondi',
-        input.total_amount,
-        input.payment_method || 'Cash on Delivery',
-        input.order_notes?.trim() || null
-      );
-
-      const orderId = orderResult.lastInsertRowid as number;
-
-      const itemStmt = db.prepare(`
-        INSERT INTO order_items (order_id, food_id, food_name, price, quantity)
-        VALUES (?, ?, ?, ?, ?)
-      `);
-
-      const addonStmt = db.prepare(`
-        INSERT INTO order_item_addons (order_item_id, addon_id, addon_name, price)
-        VALUES (?, ?, ?, ?)
-      `);
-
-      for (const item of input.items) {
-        const itemResult = itemStmt.run(
-          orderId,
-          item.food_id || null,
-          item.food_name,
-          item.price,
-          item.quantity
-        );
-        const orderItemId = itemResult.lastInsertRowid as number;
-
-        if (item.addons && Array.isArray(item.addons)) {
-          for (const addon of item.addons) {
-            addonStmt.run(
-              orderItemId,
-              addon.addon_id || null,
-              addon.addon_name,
-              addon.price
-            );
-          }
-        }
-      }
-
-      // Automatically initialize pending payment record in payment schema
-      const paymentStmt = db.prepare(`
-        INSERT INTO payments (order_id, user_id, amount, currency, payment_method, payment_status)
-        VALUES (?, ?, ?, 'BDT', ?, 'Pending')
-      `);
-      paymentStmt.run(
-        orderId,
-        input.user_id || null,
-        input.total_amount,
-        input.payment_method || 'Cash on Delivery'
-      );
-
-      return orderId;
-    });
-
-    const orderId = insertOrderTx();
-    return { orderId };
+    return sp_place_order(db, input);
   } finally {
     db.close();
   }
@@ -1432,15 +1550,20 @@ export function getOrdersByRestaurantIdFromDb(restaurantId: number): any[] {
   }
 }
 
-// Update order status by restaurant (e.g. Preparing -> Prepared)
+// Update order status by restaurant (e.g. Preparing -> Prepared, or Cancelled via sp_cancel_order)
 export function updateOrderStatusByRestaurantInDb(orderId: number, restaurantId: number, status: string): boolean {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      UPDATE orders SET status = ? WHERE id = ? AND restaurant_id = ?
-    `);
-    const info = stmt.run(status, orderId, restaurantId);
-    return info.changes > 0;
+    if (status === 'Cancelled') {
+      return sp_cancel_order(db, orderId, 'Restaurant', 'Cancelled by restaurant management');
+    }
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        UPDATE orders SET status = ? WHERE id = ? AND restaurant_id = ?
+      `);
+      const info = stmt.run(status, orderId, restaurantId);
+      return info.changes > 0;
+    });
   } finally {
     db.close();
   }
@@ -1490,28 +1613,30 @@ export function createAddonInDb(addon: {
 }): FoodAddon {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      INSERT INTO food_addons (food_id, restaurant_id, name, price, image_url, is_available)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    const info = stmt.run(
-      addon.food_id,
-      addon.restaurant_id,
-      addon.name.trim(),
-      addon.price,
-      addon.image_url?.trim() || null,
-      addon.is_available !== undefined ? (addon.is_available ? 1 : 0) : 1
-    );
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        INSERT INTO food_addons (food_id, restaurant_id, name, price, image_url, is_available)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      const info = stmt.run(
+        addon.food_id,
+        addon.restaurant_id,
+        addon.name.trim(),
+        addon.price,
+        addon.image_url?.trim() || null,
+        addon.is_available !== undefined ? (addon.is_available ? 1 : 0) : 1
+      );
 
-    return {
-      id: info.lastInsertRowid as number,
-      food_id: addon.food_id,
-      restaurant_id: addon.restaurant_id,
-      name: addon.name.trim(),
-      price: addon.price,
-      image_url: addon.image_url || undefined,
-      is_available: addon.is_available !== undefined ? Boolean(addon.is_available) : true,
-    };
+      return {
+        id: info.lastInsertRowid as number,
+        food_id: addon.food_id,
+        restaurant_id: addon.restaurant_id,
+        name: addon.name.trim(),
+        price: addon.price,
+        image_url: addon.image_url || undefined,
+        is_available: addon.is_available !== undefined ? Boolean(addon.is_available) : true,
+      };
+    });
   } finally {
     db.close();
   }
@@ -1529,22 +1654,29 @@ export function updateAddonInDb(
 ): FoodAddon | null {
   const db = getDb();
   try {
-    const current = db.prepare('SELECT * FROM food_addons WHERE id = ? AND restaurant_id = ?').get(addonId, restaurantId) as any;
-    if (!current) return null;
+    return executeTransaction(db, () => {
+      const current = db.prepare('SELECT * FROM food_addons WHERE id = ? AND restaurant_id = ?').get(addonId, restaurantId) as any;
+      if (!current) return null;
 
-    const name = updates.name !== undefined ? updates.name.trim() : current.name;
-    const price = updates.price !== undefined ? Number(updates.price) : current.price;
-    const image_url = updates.image_url !== undefined ? updates.image_url.trim() : current.image_url;
-    const is_available = updates.is_available !== undefined ? (updates.is_available ? 1 : 0) : current.is_available;
+      const name = updates.name !== undefined ? updates.name.trim() : current.name;
+      const price = updates.price !== undefined ? Number(updates.price) : current.price;
+      const image_url = updates.image_url !== undefined ? updates.image_url.trim() : current.image_url;
+      const is_available = updates.is_available !== undefined ? (updates.is_available ? 1 : 0) : current.is_available;
 
-    const stmt = db.prepare(`
-      UPDATE food_addons
-      SET name = ?, price = ?, image_url = ?, is_available = ?
-      WHERE id = ? AND restaurant_id = ?
-    `);
-    stmt.run(name, price, image_url, is_available, addonId, restaurantId);
+      const stmt = db.prepare(`
+        UPDATE food_addons
+        SET name = ?, price = ?, image_url = ?, is_available = ?
+        WHERE id = ? AND restaurant_id = ?
+      `);
+      stmt.run(name, price, image_url, is_available, addonId, restaurantId);
 
-    return getAddonByIdFromDb(addonId);
+      const row = db.prepare(`
+        SELECT id, food_id, restaurant_id, name, price, image_url, is_available, created_at
+        FROM food_addons
+        WHERE id = ?
+      `).get(addonId);
+      return (row as FoodAddon) || null;
+    });
   } finally {
     db.close();
   }
@@ -1553,12 +1685,14 @@ export function updateAddonInDb(
 export function deleteAddonInDb(addonId: number, restaurantId: number): boolean {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      DELETE FROM food_addons
-      WHERE id = ? AND restaurant_id = ?
-    `);
-    const info = stmt.run(addonId, restaurantId);
-    return info.changes > 0;
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        DELETE FROM food_addons
+        WHERE id = ? AND restaurant_id = ?
+      `);
+      const info = stmt.run(addonId, restaurantId);
+      return info.changes > 0;
+    });
   } finally {
     db.close();
   }
@@ -1582,39 +1716,41 @@ export function createRiderInDb(rider: {
 }): SafeRider {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      INSERT INTO riders (full_name, phone_number, email, vehicle_type, vehicle_number, driving_license, nid_number, address, avatar_url, password_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const info = stmt.run(
-      rider.full_name.trim(),
-      rider.phone_number.trim(),
-      rider.email.toLowerCase().trim(),
-      rider.vehicle_type?.trim() || 'Motorcycle',
-      rider.vehicle_number?.trim() || null,
-      rider.driving_license?.trim() || null,
-      rider.nid_number?.trim() || null,
-      rider.address?.trim() || null,
-      rider.avatar_url || null,
-      rider.password_hash
-    );
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        INSERT INTO riders (full_name, phone_number, email, vehicle_type, vehicle_number, driving_license, nid_number, address, avatar_url, password_hash)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const info = stmt.run(
+        rider.full_name.trim(),
+        rider.phone_number.trim(),
+        rider.email.toLowerCase().trim(),
+        rider.vehicle_type?.trim() || 'Motorcycle',
+        rider.vehicle_number?.trim() || null,
+        rider.driving_license?.trim() || null,
+        rider.nid_number?.trim() || null,
+        rider.address?.trim() || null,
+        rider.avatar_url || null,
+        rider.password_hash
+      );
 
-    return {
-      id: info.lastInsertRowid as number,
-      full_name: rider.full_name.trim(),
-      phone_number: rider.phone_number.trim(),
-      email: rider.email.toLowerCase().trim(),
-      vehicle_type: rider.vehicle_type || 'Motorcycle',
-      vehicle_number: rider.vehicle_number,
-      driving_license: rider.driving_license,
-      nid_number: rider.nid_number,
-      address: rider.address,
-      avatar_url: rider.avatar_url,
-      status: 'Available',
-      total_deliveries: 0,
-      rating: 4.9,
-      earnings: 0.00,
-    };
+      return {
+        id: info.lastInsertRowid as number,
+        full_name: rider.full_name.trim(),
+        phone_number: rider.phone_number.trim(),
+        email: rider.email.toLowerCase().trim(),
+        vehicle_type: rider.vehicle_type || 'Motorcycle',
+        vehicle_number: rider.vehicle_number,
+        driving_license: rider.driving_license,
+        nid_number: rider.nid_number,
+        address: rider.address,
+        avatar_url: rider.avatar_url,
+        status: 'Available',
+        total_deliveries: 0,
+        rating: 4.9,
+        earnings: 0.00,
+      };
+    });
   } finally {
     db.close();
   }
@@ -1654,13 +1790,15 @@ export function findRiderByIdFromDb(id: number): SafeRider | null {
 export function updateRiderStatusInDb(riderId: number, status: string): boolean {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      UPDATE riders
-      SET status = ?
-      WHERE id = ?
-    `);
-    const info = stmt.run(status, riderId);
-    return info.changes > 0;
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        UPDATE riders
+        SET status = ?
+        WHERE id = ?
+      `);
+      const info = stmt.run(status, riderId);
+      return info.changes > 0;
+    });
   } finally {
     db.close();
   }
@@ -1679,41 +1817,48 @@ export function updateRiderProfileInDb(
 ): SafeRider | null {
   const db = getDb();
   try {
-    const updates: string[] = [];
-    const params: any[] = [];
+    return executeTransaction(db, () => {
+      const updates: string[] = [];
+      const params: any[] = [];
 
-    if (data.full_name !== undefined) {
-      updates.push('full_name = ?');
-      params.push(data.full_name.trim());
-    }
-    if (data.phone_number !== undefined) {
-      updates.push('phone_number = ?');
-      params.push(data.phone_number.trim());
-    }
-    if (data.vehicle_type !== undefined) {
-      updates.push('vehicle_type = ?');
-      params.push(data.vehicle_type.trim());
-    }
-    if (data.vehicle_number !== undefined) {
-      updates.push('vehicle_number = ?');
-      params.push(data.vehicle_number.trim());
-    }
-    if (data.address !== undefined) {
-      updates.push('address = ?');
-      params.push(data.address.trim());
-    }
-    if (data.avatar_url !== undefined) {
-      updates.push('avatar_url = ?');
-      params.push(data.avatar_url.trim());
-    }
+      if (data.full_name !== undefined) {
+        updates.push('full_name = ?');
+        params.push(data.full_name.trim());
+      }
+      if (data.phone_number !== undefined) {
+        updates.push('phone_number = ?');
+        params.push(data.phone_number.trim());
+      }
+      if (data.vehicle_type !== undefined) {
+        updates.push('vehicle_type = ?');
+        params.push(data.vehicle_type.trim());
+      }
+      if (data.vehicle_number !== undefined) {
+        updates.push('vehicle_number = ?');
+        params.push(data.vehicle_number.trim());
+      }
+      if (data.address !== undefined) {
+        updates.push('address = ?');
+        params.push(data.address.trim());
+      }
+      if (data.avatar_url !== undefined) {
+        updates.push('avatar_url = ?');
+        params.push(data.avatar_url.trim());
+      }
 
-    if (updates.length === 0) return findRiderByIdFromDb(riderId);
+      if (updates.length > 0) {
+        params.push(riderId);
+        const stmt = db.prepare(`UPDATE riders SET ${updates.join(', ')} WHERE id = ?`);
+        stmt.run(...params);
+      }
 
-    params.push(riderId);
-    const stmt = db.prepare(`UPDATE riders SET ${updates.join(', ')} WHERE id = ?`);
-    stmt.run(...params);
-
-    return findRiderByIdFromDb(riderId);
+      const row = db.prepare(`
+        SELECT id, full_name, phone_number, email, vehicle_type, vehicle_number, driving_license, nid_number, address, avatar_url, status, total_deliveries, rating, earnings, created_at
+        FROM riders
+        WHERE id = ?
+      `).get(riderId);
+      return (row as SafeRider) || null;
+    });
   } finally {
     db.close();
   }
@@ -1746,31 +1891,79 @@ export function getRiderDeliveriesFromDb(riderId: number): any[] {
   }
 }
 
+// Multi-step DML transaction: updates order status via stored procedure
+// If delivered, executes sp_complete_order_delivery (increments rider deliveries, credits earnings, queues rating prompt)
+// If cancelled, executes sp_cancel_order (restores inventory stock, sets payment refunded/failed, frees rider)
 export function updateOrderStatusByRiderInDb(orderId: number, riderId: number, status: string): boolean {
   const db = getDb();
   try {
-    const updateTx = db.transaction(() => {
+    if (status === 'Delivered') {
+      return sp_complete_order_delivery(db, orderId, riderId);
+    }
+    if (status === 'Cancelled') {
+      return sp_cancel_order(db, orderId, 'Rider');
+    }
+    return executeTransaction(db, () => {
       const stmt = db.prepare(`
         UPDATE orders
         SET status = ?, rider_id = ?
         WHERE id = ?
       `);
       const info = stmt.run(status, riderId, orderId);
-
-      // If status is 'Delivered', increment rider total_deliveries and add ৳50 delivery commission to earnings
-      if (status === 'Delivered') {
-        db.prepare(`
-          UPDATE riders
-          SET total_deliveries = total_deliveries + 1,
-              earnings = earnings + 50.00
-          WHERE id = ?
-        `).run(riderId);
-      }
-
       return info.changes > 0;
     });
+  } finally {
+    db.close();
+  }
+}
 
-    return updateTx();
+/**
+ * STORED PROCEDURE WRAPPER: cancelOrderInDb
+ * Invokes sp_cancel_order to cancel an order, restore stock, refund payment, and release rider.
+ */
+export function cancelOrderInDb(orderId: number, cancelledBy: string, reason?: string): boolean {
+  const db = getDb();
+  try {
+    return sp_cancel_order(db, orderId, cancelledBy, reason);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * STORED PROCEDURE WRAPPER: updateFoodStockInDb
+ * Invokes sp_update_food_stock to safely alter stock and auto-synchronize availability.
+ */
+export function updateFoodStockInDb(foodId: number, quantityDelta: number): { newStock: number; isAvailable: boolean } {
+  const db = getDb();
+  try {
+    return sp_update_food_stock(db, foodId, quantityDelta);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * STORED PROCEDURE WRAPPER: assignRiderToOrderInDb
+ * Invokes sp_assign_rider to bind an available rider to an order.
+ */
+export function assignRiderToOrderInDb(orderId: number, riderId: number): boolean {
+  const db = getDb();
+  try {
+    return sp_assign_rider(db, orderId, riderId);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * STORED PROCEDURE WRAPPER: recalculateRestaurantRatingsInDb
+ * Invokes sp_recalculate_restaurant_ratings to update overall restaurant score.
+ */
+export function recalculateRestaurantRatingsInDb(restaurantId: number): number {
+  const db = getDb();
+  try {
+    return sp_recalculate_restaurant_ratings(db, restaurantId);
   } finally {
     db.close();
   }
@@ -1793,35 +1986,37 @@ export function createPaymentRecordInDb(record: {
 }): PaymentRecord {
   const db = getDb();
   try {
-    const stmt = db.prepare(`
-      INSERT INTO payments (order_id, user_id, amount, currency, payment_method, payment_status, transaction_id, payment_gateway, gateway_response)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const info = stmt.run(
-      record.order_id,
-      record.user_id || null,
-      record.amount,
-      record.currency || 'BDT',
-      record.payment_method,
-      record.payment_status || 'Pending',
-      record.transaction_id || null,
-      record.payment_gateway || null,
-      record.gateway_response || null
-    );
+    return executeTransaction(db, () => {
+      const stmt = db.prepare(`
+        INSERT INTO payments (order_id, user_id, amount, currency, payment_method, payment_status, transaction_id, payment_gateway, gateway_response)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const info = stmt.run(
+        record.order_id,
+        record.user_id || null,
+        record.amount,
+        record.currency || 'BDT',
+        record.payment_method,
+        record.payment_status || 'Pending',
+        record.transaction_id || null,
+        record.payment_gateway || null,
+        record.gateway_response || null
+      );
 
-    return {
-      id: info.lastInsertRowid as number,
-      order_id: record.order_id,
-      user_id: record.user_id,
-      amount: record.amount,
-      currency: record.currency || 'BDT',
-      payment_method: record.payment_method,
-      payment_status: record.payment_status || 'Pending',
-      transaction_id: record.transaction_id,
-      payment_gateway: record.payment_gateway,
-      gateway_response: record.gateway_response,
-      paid_at: null,
-    };
+      return {
+        id: info.lastInsertRowid as number,
+        order_id: record.order_id,
+        user_id: record.user_id,
+        amount: record.amount,
+        currency: record.currency || 'BDT',
+        payment_method: record.payment_method,
+        payment_status: record.payment_status || 'Pending',
+        transaction_id: record.transaction_id,
+        payment_gateway: record.payment_gateway,
+        gateway_response: record.gateway_response,
+        paid_at: null,
+      };
+    });
   } finally {
     db.close();
   }
@@ -1862,18 +2057,29 @@ function getOrCreateWishlist(db: Database.Database, userId: number): number {
   return info.lastInsertRowid as number;
 }
 
-/** Toggle wishlist: adds item if not present, removes if already present. Returns true if now wishlisted. */
+/** Toggle wishlist: adds item if not present, removes if already present. Returns true if now wishlisted. Protected by explicit BEGIN TRANSACTION -> COMMIT / ROLLBACK */
 export function toggleWishlistItemInDb(userId: number, foodId: number): boolean {
   const db = getDb();
   try {
-    const wishlistId = getOrCreateWishlist(db, userId);
-    const existing = db.prepare('SELECT id FROM wishlist_items WHERE wishlist_id = ? AND food_id = ?').get(wishlistId, foodId);
-    if (existing) {
-      db.prepare('DELETE FROM wishlist_items WHERE wishlist_id = ? AND food_id = ?').run(wishlistId, foodId);
-      return false;
-    } else {
-      db.prepare('INSERT INTO wishlist_items (wishlist_id, food_id) VALUES (?, ?)').run(wishlistId, foodId);
-      return true;
+    db.exec('BEGIN TRANSACTION');
+    try {
+      const wishlistId = getOrCreateWishlist(db, userId);
+      const existing = db.prepare('SELECT id FROM wishlist_items WHERE wishlist_id = ? AND food_id = ?').get(wishlistId, foodId);
+      let result: boolean;
+      if (existing) {
+        db.prepare('DELETE FROM wishlist_items WHERE wishlist_id = ? AND food_id = ?').run(wishlistId, foodId);
+        result = false;
+      } else {
+        db.prepare('INSERT INTO wishlist_items (wishlist_id, food_id) VALUES (?, ?)').run(wishlistId, foodId);
+        result = true;
+      }
+      db.exec('COMMIT');
+      return result;
+    } catch (txError) {
+      if (db.inTransaction) {
+        db.exec('ROLLBACK');
+      }
+      throw txError;
     }
   } finally {
     db.close();
@@ -2091,7 +2297,9 @@ export function submitOrderRatingsInDb(
 ): SubmitOrderRatingsResult {
   const db = getDb();
   try {
-    const submitTx = db.transaction(() => {
+    // Explicit transaction control: all rating inserts and trigger updates happen atomically
+    db.exec('BEGIN TRANSACTION');
+    try {
       // 1. Verify order exists
       const order = db.prepare('SELECT id, status, is_rated FROM orders WHERE id = ?').get(orderId) as any;
       if (!order) {
@@ -2137,6 +2345,9 @@ export function submitOrderRatingsInDb(
       const restRow = db.prepare('SELECT rating FROM restaurants WHERE id = ?').get(primaryRestId) as any;
       const newRestRating = restRow ? Number(restRow.rating) || prevRestRating : prevRestRating;
 
+      // Explicit COMMIT
+      db.exec('COMMIT');
+
       return {
         orderId,
         restaurantId: primaryRestId,
@@ -2145,9 +2356,13 @@ export function submitOrderRatingsInDb(
         newRestaurantRating: newRestRating,
         updatedFoods,
       };
-    });
-
-    return submitTx();
+    } catch (txError) {
+      // Explicit ROLLBACK if any rating operation fails
+      if (db.inTransaction) {
+        db.exec('ROLLBACK');
+      }
+      throw txError;
+    }
   } finally {
     db.close();
   }
@@ -2168,11 +2383,15 @@ export interface UserOrderSummary {
   needs_rating: number;
   created_at: string;
   rider_name: string | null;
+  estimated_delivery_time?: string;
+  delivery_fee?: number;
+  order_summary?: string;
   items: { food_name: string; quantity: number; price: number }[];
 }
 
 /**
  * Get all orders for a specific user, newest first, with item summaries and rider info.
+ * Leverages database UDFs: estimate_delivery_time, calculate_delivery_fee, and format_order_summary.
  */
 export function getUserOrdersFromDb(userId: number): UserOrderSummary[] {
   const db = getDb();
@@ -2180,7 +2399,10 @@ export function getUserOrdersFromDb(userId: number): UserOrderSummary[] {
     const orders = db.prepare(`
       SELECT o.id, o.status, o.total_amount, o.delivery_location, o.delivery_address,
              o.payment_method, o.is_rated, o.needs_rating, o.created_at,
-             r.full_name as rider_name
+             r.full_name as rider_name,
+             estimate_delivery_time(o.delivery_location, o.status) as estimated_delivery_time,
+             calculate_delivery_fee(o.delivery_location, o.total_amount) as delivery_fee,
+             format_order_summary(o.customer_name, o.total_amount, o.payment_method) as order_summary
       FROM orders o
       LEFT JOIN riders r ON o.rider_id = r.id
       WHERE o.user_id = ?
@@ -2202,6 +2424,9 @@ export function getUserOrdersFromDb(userId: number): UserOrderSummary[] {
         needs_rating: Number(order.needs_rating || 0),
         created_at: order.created_at,
         rider_name: order.rider_name || null,
+        estimated_delivery_time: order.estimated_delivery_time,
+        delivery_fee: Number(order.delivery_fee || 0),
+        order_summary: order.order_summary,
         items: items.map((it) => ({
           food_name: it.food_name,
           quantity: Number(it.quantity),
@@ -2221,14 +2446,17 @@ export function getUserOrdersFromDb(userId: number): UserOrderSummary[] {
 /**
  * Update a rider's current delivery zone location.
  * When rider is Available, trigger will auto-assign pending orders in that zone.
+ * Protected by explicit transaction control (BEGIN -> COMMIT / ROLLBACK).
  */
 export function updateRiderLocationInDb(riderId: number, location: string): boolean {
   const db = getDb();
   try {
-    const result = db.prepare(`
-      UPDATE riders SET location = ? WHERE id = ?
-    `).run(location, riderId);
-    return result.changes > 0;
+    return executeTransaction(db, () => {
+      const result = db.prepare(`
+        UPDATE riders SET location = ? WHERE id = ?
+      `).run(location, riderId);
+      return result.changes > 0;
+    });
   } finally {
     db.close();
   }

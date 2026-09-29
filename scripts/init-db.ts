@@ -26,8 +26,19 @@ function initDatabase() {
     console.log('✅ Executed schema.sql - Created tables');
 
     const seedSql = fs.readFileSync(SEED_PATH, 'utf8');
-    db.exec(seedSql);
-    console.log('✅ Executed seed.sql - Inserted initial data');
+    // Explicit transaction control for database seeding
+    db.exec('BEGIN TRANSACTION');
+    try {
+      db.exec(seedSql);
+      db.exec('COMMIT');
+      console.log('✅ Executed seed.sql with explicit transaction COMMIT - Inserted initial data');
+    } catch (seedError) {
+      if (db.inTransaction) {
+        db.exec('ROLLBACK');
+        console.error('⚠️ Rolled back seed transaction due to error');
+      }
+      throw seedError;
+    }
 
     const countResult = db.prepare('SELECT COUNT(*) as count FROM food_items').get() as { count: number };
     const restCount = db.prepare('SELECT COUNT(*) as count FROM restaurants').get() as { count: number };
