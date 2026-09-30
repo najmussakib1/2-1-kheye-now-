@@ -962,11 +962,11 @@ export default function RestaurantDashboardPage() {
                     </div>
                   </div>
 
-                  {/* Row 1: Top Most Ordered + Top Most Revenue */}
+                  {/* Row 1: Top 5 Most Ordered + Top 5 Most Revenue */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="p-5 rounded-2xl bg-slate-900/70 border border-emerald-500/20">
                       <p className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-                        <ShoppingBag className="w-3 h-3" /> Top Most Ordered Items
+                        <ShoppingBag className="w-3 h-3" /> Top 5 Most Ordered Items
                       </p>
                       {stats.mostOrderedItem.length === 0 ? (
                         <p className="text-sm text-slate-500">No order data yet</p>
@@ -992,7 +992,7 @@ export default function RestaurantDashboardPage() {
                     </div>
                     <div className="p-5 rounded-2xl bg-slate-900/70 border border-teal-500/20">
                       <p className="text-[10px] font-bold text-teal-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-                        <DollarSign className="w-3 h-3" /> Top Revenue Products
+                        <DollarSign className="w-3 h-3" /> Top 5 Revenue Products
                       </p>
                       {stats.mostRevenueProduct.length === 0 ? (
                         <p className="text-sm text-slate-500">No revenue data yet</p>
@@ -1018,11 +1018,11 @@ export default function RestaurantDashboardPage() {
                     </div>
                   </div>
 
-                  {/* Row 2: Top Most Rated + Top Most Added Addon */}
+                  {/* Row 2: Top 5 Most Rated + Top 5 Most Added Addon */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="p-5 rounded-2xl bg-slate-900/70 border border-amber-500/20">
                       <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-                        <Trophy className="w-3 h-3" /> Top Most Rated Foods
+                        <Trophy className="w-3 h-3" /> Top 5 Most Rated Foods
                       </p>
                       {stats.mostRatedFood.length === 0 ? (
                         <p className="text-sm text-slate-500">No rating data yet</p>
@@ -1052,7 +1052,7 @@ export default function RestaurantDashboardPage() {
                     </div>
                     <div className="p-5 rounded-2xl bg-slate-900/70 border border-violet-500/20">
                       <p className="text-[10px] font-bold text-violet-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-                        <TrendingUp className="w-3 h-3" /> Top Most Added Add-ons
+                        <TrendingUp className="w-3 h-3" /> Top 5 Most Added Add-ons
                       </p>
                       {stats.mostAddedAddon.length === 0 ? (
                         <p className="text-sm text-slate-500">No add-on data yet</p>
@@ -1078,10 +1078,10 @@ export default function RestaurantDashboardPage() {
                     </div>
                   </div>
 
-                  {/* Row 3: Top Most Ordered Locations */}
+                  {/* Row 3: Top 5 Most Ordered Locations */}
                   <div className="p-5 rounded-2xl bg-slate-900/70 border border-rose-500/20">
                     <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-                      <Compass className="w-3 h-3" /> Top Most Ordered Locations
+                      <Compass className="w-3 h-3" /> Top 5 Most Ordered Locations
                     </p>
                     {stats.mostOrderedLocation.length === 0 ? (
                       <p className="text-sm text-slate-500">No location data</p>
@@ -1107,11 +1107,11 @@ export default function RestaurantDashboardPage() {
                     )}
                   </div>
 
-                  {/* Row 4: Top Riders by Orders + Top Riders by Payments */}
+                  {/* Row 4: Top 5 Riders by Orders + Top 5 Riders by Payments */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="p-5 rounded-2xl bg-slate-900/70 border border-sky-500/20">
                       <p className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-                        <Bike className="w-3 h-3" /> Riders With Most Orders
+                        <Bike className="w-3 h-3" /> Top 5 Riders by Orders
                       </p>
                       {stats.topRidersByOrders.length === 0 ? (
                         <p className="text-sm text-slate-500">No rider deliveries yet</p>
@@ -1143,7 +1143,7 @@ export default function RestaurantDashboardPage() {
                     </div>
                     <div className="p-5 rounded-2xl bg-slate-900/70 border border-lime-500/20">
                       <p className="text-[10px] font-bold text-lime-400 uppercase tracking-widest mb-3 flex items-center gap-1">
-                        <Wallet className="w-3 h-3" /> Riders With Most Payments
+                        <Wallet className="w-3 h-3" /> Top 5 Riders by Payments
                       </p>
                       {stats.topRidersByPayments.length === 0 ? (
                         <p className="text-sm text-slate-500">No payment data yet</p>

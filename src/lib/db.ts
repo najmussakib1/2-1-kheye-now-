@@ -9,6 +9,7 @@ import {
   sp_assign_rider,
   sp_recalculate_restaurant_ratings,
 } from './procedures';
+import { getDeliveryFeeByLocation } from './constants';
 
 export interface FoodItem {
   id: number;
@@ -256,15 +257,9 @@ export function getFoodStockStatus(stock?: number, isAvailable?: boolean | numbe
   return 'In Stock';
 }
 
-/** Computes delivery fee based on delivery zone and total order amount (free delivery >= ৳1500) */
+/** Computes delivery fee based on delivery zone (rider earning on order completion) */
 export function calculateDeliveryFee(location?: string, totalAmount?: number): number {
-  const total = Number(totalAmount) || 0;
-  if (total >= 1500) return 0.00;
-  const loc = (location || '').trim().toLowerCase();
-  if (loc === 'dhanmondi') return 40.00;
-  if (loc === 'gulshan' || loc === 'banani') return 60.00;
-  if (loc === 'uttara' || loc === 'mirpur') return 70.00;
-  return 50.00;
+  return getDeliveryFeeByLocation(location);
 }
 
 /** Computes estimated delivery turnaround time */
@@ -276,12 +271,6 @@ export function estimateDeliveryTime(location?: string, status?: string): string
   if (s === 'Prepared') return '25 - 35 mins';
   if (s === 'Preparing') return '35 - 45 mins';
   return '40 - 55 mins';
-}
-
-/** Computes delivery rider commission (৳50.00 base + 2% bonus of order total) */
-export function calculateRiderCommission(totalAmount: number): number {
-  const total = Number(totalAmount) || 0;
-  return Math.round((50.00 + (total * 0.02)) * 100) / 100;
 }
 
 /** Formats structured receipt order summary string */
@@ -308,10 +297,6 @@ export function registerDatabaseFunctions(db: Database.Database) {
 
   db.function('estimate_delivery_time', { deterministic: true }, (location: any, status: any) => {
     return estimateDeliveryTime(String(location || ''), String(status || ''));
-  });
-
-  db.function('calculate_rider_commission', { deterministic: true }, (totalAmount: any) => {
-    return calculateRiderCommission(Number(totalAmount));
   });
 
   db.function('format_order_summary', { deterministic: true }, (name: any, total: any, method: any) => {
@@ -734,7 +719,24 @@ export function getDb() {
     `);
   } catch { }
 
-  // Trigger 6: Update earnings on delivery
+  // Trigger 6: Pay the rider the delivery fee on delivery completion.
+  // Simple split, no percentages and no fixed commission:
+  //   rider      += delivery fee (from calculate_delivery_fee)
+  //   restaurant += everything else
+  // The fee is capped at the order total so it can never exceed what the
+  // customer actually paid, which keeps the two shares summing to exactly
+  // total_amount with no money created or lost.
+  try {
+    const legacy = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'trigger_update_earnings_on_delivery'")
+      .get();
+    if (legacy) {
+      db.exec('DROP TRIGGER trigger_update_earnings_on_delivery;');
+    }
+  } catch {
+    // ignore - trigger already gone
+  }
+
   try {
     db.exec(`
       CREATE TRIGGER IF NOT EXISTS trigger_update_earnings_on_delivery
@@ -742,10 +744,14 @@ export function getDb() {
       WHEN NEW.status = 'Delivered' AND OLD.status != 'Delivered'
       BEGIN
         UPDATE riders
-        SET earnings = earnings + (NEW.total_amount * 0.80)
+        SET earnings = earnings
+              + MIN(calculate_delivery_fee(NEW.delivery_location, NEW.total_amount), NEW.total_amount)
         WHERE id = NEW.rider_id;
+
         UPDATE restaurants
-        SET total_earnings = total_earnings + (NEW.total_amount * 0.20)
+        SET total_earnings = total_earnings
+              + NEW.total_amount
+              - MIN(calculate_delivery_fee(NEW.delivery_location, NEW.total_amount), NEW.total_amount)
         WHERE id = NEW.restaurant_id;
       END;
     `);
@@ -1636,6 +1642,12 @@ export function updateOrderStatusByRestaurantInDb(orderId: number, restaurantId:
     if (status === 'Cancelled') {
       return sp_cancel_order(db, orderId, 'Restaurant', 'Cancelled by restaurant management');
     }
+    if (status === 'Delivered') {
+      const order = db.prepare('SELECT rider_id FROM orders WHERE id = ?').get(orderId) as any;
+      if (order?.rider_id) {
+        return sp_complete_order_delivery(db, orderId, order.rider_id);
+      }
+    }
     return executeTransaction(db, () => {
       const stmt = db.prepare(`
         UPDATE orders SET status = ? WHERE id = ? AND restaurant_id = ?
@@ -1948,7 +1960,9 @@ export function getRiderDeliveriesFromDb(riderId: number): any[] {
   try {
     // Deliveries assigned to this rider or pending orders available for pickup
     const stmt = db.prepare(`
-      SELECT o.id, o.customer_name, o.phone_number, o.delivery_address, o.total_amount, o.payment_method, o.order_notes, o.status, o.created_at, o.rider_id
+      SELECT o.id, o.customer_name, o.phone_number, o.delivery_address, o.delivery_location,
+             o.total_amount, o.payment_method, o.order_notes, o.status, o.created_at, o.rider_id,
+             calculate_delivery_fee(o.delivery_location, o.total_amount) as delivery_fee
       FROM orders o
       WHERE o.rider_id = ? OR (o.rider_id IS NULL AND o.status = 'Confirmed')
       ORDER BY o.id DESC
@@ -1957,6 +1971,7 @@ export function getRiderDeliveriesFromDb(riderId: number): any[] {
     const rows = stmt.all(riderId) as any[];
 
     for (const order of rows) {
+      order.delivery_fee = Number(order.delivery_fee || 50);
       const items = db.prepare('SELECT id, food_name, price, quantity FROM order_items WHERE order_id = ?').all(order.id) as any[];
       for (const item of items) {
         item.addons = db.prepare('SELECT addon_name, price FROM order_item_addons WHERE order_item_id = ?').all(item.id);

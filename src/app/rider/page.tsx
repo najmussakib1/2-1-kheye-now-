@@ -995,9 +995,13 @@ export default function RiderPortalPage() {
 
                         {/* Order Footer & Actions */}
                         <div className="pt-3 border-t border-emerald-500/15">
-                          <div className="flex items-center justify-between mb-3 text-xs">
+                          <div className="flex items-center justify-between mb-1 text-xs">
                             <span className="text-slate-400">Total Bill ({order.payment_method}):</span>
                             <span className="font-extrabold text-base text-emerald-400">৳{order.total_amount}</span>
+                          </div>
+                          <div className="flex items-center justify-between mb-3 text-xs">
+                            <span className="text-slate-400">Delivery Fee (Rider Earning):</span>
+                            <span className="font-bold text-amber-300">৳{order.delivery_fee || 50}</span>
                           </div>
 
                           {/* Delivery Action Buttons */}
@@ -1017,7 +1021,7 @@ export default function RiderPortalPage() {
                                   className="flex-1 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 hover:from-emerald-400 hover:to-teal-300 transition-all flex items-center justify-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
                                 >
                                   <Check className="w-3.5 h-3.5" />
-                                  <span>Mark as Delivered (+৳50)</span>
+                                  <span>Mark as Delivered (+৳{order.delivery_fee || 50})</span>
                                 </button>
                               )}
                             </div>
@@ -1026,7 +1030,7 @@ export default function RiderPortalPage() {
                           {isDelivered && (
                             <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-center text-xs font-bold flex items-center justify-center gap-1.5">
                               <CheckCircle2 className="w-4 h-4" />
-                              <span>Delivered Successfully • Earned ৳50</span>
+                              <span>Delivered Successfully • Earned ৳{order.delivery_fee || 50}</span>
                             </div>
                           )}
                         </div>

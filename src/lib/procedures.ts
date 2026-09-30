@@ -128,7 +128,9 @@ export function sp_place_order(db: Database.Database, input: CreateOrderInput): 
  * PROCEDURE: sp_complete_order_delivery
  * Atomically marks an order as delivered:
  * 1. Updates order status to 'Delivered'.
- * 2. Credits rider commission (৳50.00 delivery commission) and increments total_deliveries.
+ * 2. Increments total_deliveries. Rider earnings are credited by
+ *    trigger_update_earnings_on_delivery, which adds the delivery fee from
+ *    calculate_delivery_fee and nothing else. There is no rider commission.
  * 3. Updates rider availability back to 'Available' if they have no other open orders.
  * 4. Queues a customer rating prompt.
  */
@@ -158,11 +160,15 @@ export function sp_complete_order_delivery(
       WHERE id = ?
     `).run(riderId, orderId);
 
-    // 2. Increment rider delivery count and add ৳50.00 delivery commission
+    // 2. Increment rider delivery count.
+    // Rider earnings are NOT credited here. trigger_update_earnings_on_delivery
+    // is the single source of truth: it adds the delivery fee from
+    // calculate_delivery_fee and nothing else. Crediting anything on top of
+    // that (a flat ৳50.00 commission, a percentage of the order) paid the
+    // rider more than once for the same delivery.
     db.prepare(`
       UPDATE riders
-      SET total_deliveries = total_deliveries + 1,
-          earnings = earnings + 50.00
+      SET total_deliveries = total_deliveries + 1
       WHERE id = ?
     `).run(riderId);
 

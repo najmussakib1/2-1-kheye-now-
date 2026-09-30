@@ -113,22 +113,6 @@ BEGIN
 END;
 
 -- ------------------------------------------------------------
--- Function 5: calculate_rider_commission
--- Purpose: Computes rider commission and delivery earnings
---          (Flat ৳50.00 delivery fee + 2% bonus of order total).
--- Input:   total_amount (DECIMAL)
--- Returns: DECIMAL(10, 2)
--- ------------------------------------------------------------
-CREATE OR REPLACE FUNCTION calculate_rider_commission(
-    p_total_amount DECIMAL(10, 2)
-)
-RETURNS DECIMAL(10, 2)
-DETERMINISTIC
-BEGIN
-    RETURN ROUND(50.00 + (COALESCE(p_total_amount, 0) * 0.02), 2);
-END;
-
--- ------------------------------------------------------------
 -- Function 6: format_order_summary
 -- Purpose: Formats an executive receipt summary string.
 -- Input:   customer_name (VARCHAR), total_amount (DECIMAL), payment_method (VARCHAR)
@@ -215,7 +199,8 @@ END;
 -- Purpose: Completes order delivery flow:
 --          1. Updates order status to 'Delivered'.
 --          2. Increments rider total_deliveries count.
---          3. Calculates and credits delivery commission to rider earnings.
+--          3. Rider earnings are credited by trigger_update_earnings_on_delivery
+--             (the delivery fee only). No commission is applied here.
 --          4. Sets rider status to 'Available' if no other active deliveries.
 --          5. Queues customer rating prompt.
 -- ------------------------------------------------------------
@@ -240,10 +225,11 @@ BEGIN
         needs_rating = 1
     WHERE id = p_order_id;
 
-    -- 2. Update rider delivery stats and credit delivery commission (৳50.00)
+    -- 2. Update rider delivery stats.
+    -- Earnings are credited by trigger_update_earnings_on_delivery
+    -- (the delivery fee from calculate_delivery_fee), never here.
     UPDATE riders
-    SET total_deliveries = total_deliveries + 1,
-        earnings = earnings + 50.00
+    SET total_deliveries = total_deliveries + 1
     WHERE id = p_rider_id;
 
     -- 3. Release rider to Available if no other active deliveries

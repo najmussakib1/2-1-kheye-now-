@@ -352,7 +352,7 @@ export function getMostAddedAddonsForFood(foodId: number, limit = 5): SuggestedA
  */
 export function getRestaurantStatistics(restaurantId: number): RestaurantStatsData {
   const db = getDb();
-  const TOP = 3;
+  const TOP = 5;
   try {
     // 5.1 Most Ordered Item
     const mostOrderedRows = db.prepare(`

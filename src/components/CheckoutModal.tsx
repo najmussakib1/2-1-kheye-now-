@@ -19,7 +19,7 @@ import {
   Check,
   Compass,
 } from 'lucide-react';
-import { DELIVERY_LOCATIONS } from '@/lib/constants';
+import { DELIVERY_LOCATIONS, getDeliveryFeeByLocation } from '@/lib/constants';
 
 export default function CheckoutModal() {
   const {
@@ -82,7 +82,7 @@ export default function CheckoutModal() {
     const addonsTotal = (item.selectedAddons || []).reduce((s, a) => s + Number(a.price), 0);
     return sum + (Number(item.food.sale_price) + addonsTotal) * item.quantity;
   }, 0);
-  const deliveryFee = checkoutItems.length > 0 ? 40 : 0;
+  const deliveryFee = checkoutItems.length > 0 ? getDeliveryFeeByLocation(deliveryLocation) : 0;
   const grandTotal = subtotal + deliveryFee;
 
   if (!isCheckoutModalOpen) return null;
