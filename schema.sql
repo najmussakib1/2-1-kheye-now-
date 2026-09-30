@@ -300,18 +300,44 @@ BEGIN
     ) IS NOT NULL;
 END;
 
--- Trigger 2: Auto-assign oldest pending order when a rider becomes 'Available' or updates location
-CREATE TRIGGER IF NOT EXISTS trigger_assign_orders_when_rider_available
+-- Trigger 2: Assign a waiting order when a rider's availability or zone changes
+-- Replaces the previous version of this trigger, which only matched orders in
+-- status 'Pending'. No code path ever writes 'Pending' -- sp_place_order
+-- inserts 'Preparing' and the restaurant dashboard advances to 'Prepared' --
+-- so waiting orders were never assigned to anyone.
+-- Fires on any change to a rider's status or location, then hands the oldest
+-- waiting order in that rider's zone to the best eligible rider in the same
+-- zone. Best eligible means: in the zone, online/available ('Available'
+-- before 'On Delivery', never 'Offline'), fewest engaged orders, fewest
+-- lifetime deliveries, lowest id. Re-evaluating the zone rather than blindly
+-- using NEW.id keeps the "least engaged rider wins" rule intact, so an order
+-- is never stacked onto a busy rider when a free one is standing by.
+CREATE TRIGGER IF NOT EXISTS trigger_assign_waiting_order_on_rider_update
 AFTER UPDATE OF status, location ON riders
-FOR EACH ROW
-WHEN NEW.status = 'Available'
+WHEN NEW.status IN ('Available', 'On Delivery')
+  AND NEW.location IS NOT NULL
+  AND TRIM(NEW.location) != ''
 BEGIN
   UPDATE orders
-  SET rider_id = NEW.id,
-      status = 'Preparing'
+  SET rider_id = (
+    SELECT r.id FROM riders r
+    WHERE r.status IN ('Available', 'On Delivery')
+      AND LOWER(TRIM(r.location)) = LOWER(TRIM(NEW.location))
+    ORDER BY
+      CASE WHEN r.status = 'Available' THEN 0 ELSE 1 END ASC,
+      (
+        SELECT COUNT(*) FROM orders o
+        WHERE o.rider_id = r.id
+          AND o.status IN ('Pending', 'Preparing', 'Prepared', 'On the Way', 'Picked Up')
+      ) ASC,
+      r.total_deliveries ASC,
+      r.id ASC
+    LIMIT 1
+  )
   WHERE id = (
     SELECT o.id FROM orders o
-    WHERE o.rider_id IS NULL AND o.status = 'Pending'
+    WHERE o.rider_id IS NULL
+      AND o.status IN ('Pending', 'Preparing', 'Prepared')
       AND LOWER(TRIM(o.delivery_location)) = LOWER(TRIM(NEW.location))
     ORDER BY o.id ASC
     LIMIT 1
@@ -360,4 +386,52 @@ BEGIN
 
   INSERT OR REPLACE INTO customer_rating_prompts (order_id, user_id, status, created_at)
   VALUES (NEW.id, NEW.user_id, 'pending', CURRENT_TIMESTAMP);
+END;
+
+-- Trigger 5: Re-run rider assignment on ANY order update
+-- Fires on every UPDATE of an order and picks the best eligible rider for
+-- the order's delivery zone:
+--   1. Rider must be in the order's zone (case/whitespace insensitive, same
+--      rule the assignment triggers already use).
+--   2. Rider must be online/available -> 'Available' or 'On Delivery'.
+--      'Offline' riders are never picked.
+--   3. Preference order: free riders ('Available') before busy ones
+--      ('On Delivery'), then fewest engaged orders, then fewest lifetime
+--      deliveries, then lowest id for a stable result.
+-- "Engaged" counts every pre-dispatch and in-flight status the app can put
+-- an order in, including 'Picked Up', so a rider holding several jobs always
+-- sorts behind an idle one in the same zone.
+-- Only pre-dispatch orders are eligible (rider_id IS NULL and status is
+-- Pending/Preparing/Prepared), so Delivered and Cancelled orders are never
+-- touched and rider earnings are not affected.
+CREATE TRIGGER IF NOT EXISTS trigger_assign_rider_on_order_update
+AFTER UPDATE ON orders
+FOR EACH ROW
+WHEN NEW.rider_id IS NULL
+  AND NEW.status IN ('Pending', 'Preparing', 'Prepared')
+  AND NEW.delivery_location IS NOT NULL
+  AND TRIM(NEW.delivery_location) != ''
+  AND EXISTS (
+    SELECT 1 FROM riders r
+    WHERE r.status IN ('Available', 'On Delivery')
+      AND LOWER(TRIM(r.location)) = LOWER(TRIM(NEW.delivery_location))
+  )
+BEGIN
+  UPDATE orders
+  SET rider_id = (
+    SELECT r.id FROM riders r
+    WHERE r.status IN ('Available', 'On Delivery')
+      AND LOWER(TRIM(r.location)) = LOWER(TRIM(NEW.delivery_location))
+    ORDER BY
+      CASE WHEN r.status = 'Available' THEN 0 ELSE 1 END ASC,
+      (
+        SELECT COUNT(*) FROM orders o
+        WHERE o.rider_id = r.id
+          AND o.status IN ('Pending', 'Preparing', 'Prepared', 'On the Way', 'Picked Up')
+      ) ASC,
+      r.total_deliveries ASC,
+      r.id ASC
+    LIMIT 1
+  )
+  WHERE id = NEW.id;
 END;

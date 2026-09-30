@@ -589,17 +589,54 @@ export function getDb() {
   }
 
   // Trigger 2: When a rider becomes Available, assign any prepared orders waiting for rider
+  // Trigger 2: Assign a waiting order when a rider's availability or zone changes.
+  // The legacy trigger_assign_orders_when_rider_available only matched orders in
+  // status 'Pending', which no code path writes (sp_place_order inserts
+  // 'Preparing'), so waiting orders were never picked up. Drop it once, on the
+  // first boot after this change, so it cannot race the corrected trigger.
+  try {
+    const legacy = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = 'trigger_assign_orders_when_rider_available'")
+      .get();
+    if (legacy) {
+      db.exec('DROP TRIGGER trigger_assign_orders_when_rider_available;');
+    }
+  } catch {
+    // ignore - legacy trigger already gone
+  }
+
   try {
     db.exec(`
-      CREATE TRIGGER IF NOT EXISTS trigger_assign_orders_when_rider_available
+      CREATE TRIGGER IF NOT EXISTS trigger_assign_waiting_order_on_rider_update
       AFTER UPDATE OF status, location ON riders
-      WHEN NEW.status = 'Available'
+      WHEN NEW.status IN ('Available', 'On Delivery')
+        AND NEW.location IS NOT NULL
+        AND TRIM(NEW.location) != ''
       BEGIN
-        UPDATE orders SET
-          rider_id = NEW.id
-        WHERE status = 'Prepared'
-          AND delivery_location = NEW.location
-          AND rider_id IS NULL;
+        UPDATE orders
+        SET rider_id = (
+          SELECT r.id FROM riders r
+          WHERE r.status IN ('Available', 'On Delivery')
+            AND LOWER(TRIM(r.location)) = LOWER(TRIM(NEW.location))
+          ORDER BY
+            CASE WHEN r.status = 'Available' THEN 0 ELSE 1 END ASC,
+            (
+              SELECT COUNT(*) FROM orders o
+              WHERE o.rider_id = r.id
+                AND o.status IN ('Pending', 'Preparing', 'Prepared', 'On the Way', 'Picked Up')
+            ) ASC,
+            r.total_deliveries ASC,
+            r.id ASC
+          LIMIT 1
+        )
+        WHERE id = (
+          SELECT o.id FROM orders o
+          WHERE o.rider_id IS NULL
+            AND o.status IN ('Pending', 'Preparing', 'Prepared')
+            AND LOWER(TRIM(o.delivery_location)) = LOWER(TRIM(NEW.location))
+          ORDER BY o.id ASC
+          LIMIT 1
+        );
       END;
     `);
   } catch {
@@ -710,6 +747,48 @@ export function getDb() {
         UPDATE restaurants
         SET total_earnings = total_earnings + (NEW.total_amount * 0.20)
         WHERE id = NEW.restaurant_id;
+      END;
+    `);
+  } catch { }
+
+  // Trigger 7: Re-run rider assignment on ANY order update.
+  // Keeps the schema.sql definition in sync on existing databases, since
+  // CREATE TRIGGER IF NOT EXISTS will not replace an already-created trigger.
+  // Eligible rider = online/available ('Available' or 'On Delivery', never
+  // 'Offline') in the order's zone; free riders sort before busy ones, then
+  // by fewest engaged orders, then fewest lifetime deliveries, then lowest id.
+  try {
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS trigger_assign_rider_on_order_update
+      AFTER UPDATE ON orders
+      FOR EACH ROW
+      WHEN NEW.rider_id IS NULL
+        AND NEW.status IN ('Pending', 'Preparing', 'Prepared')
+        AND NEW.delivery_location IS NOT NULL
+        AND TRIM(NEW.delivery_location) != ''
+        AND EXISTS (
+          SELECT 1 FROM riders r
+          WHERE r.status IN ('Available', 'On Delivery')
+            AND LOWER(TRIM(r.location)) = LOWER(TRIM(NEW.delivery_location))
+        )
+      BEGIN
+        UPDATE orders
+        SET rider_id = (
+          SELECT r.id FROM riders r
+          WHERE r.status IN ('Available', 'On Delivery')
+            AND LOWER(TRIM(r.location)) = LOWER(TRIM(NEW.delivery_location))
+          ORDER BY
+            CASE WHEN r.status = 'Available' THEN 0 ELSE 1 END ASC,
+            (
+              SELECT COUNT(*) FROM orders o
+              WHERE o.rider_id = r.id
+                AND o.status IN ('Pending', 'Preparing', 'Prepared', 'On the Way', 'Picked Up')
+            ) ASC,
+            r.total_deliveries ASC,
+            r.id ASC
+          LIMIT 1
+        )
+        WHERE id = NEW.id;
       END;
     `);
   } catch { }
