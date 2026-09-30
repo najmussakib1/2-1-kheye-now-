@@ -249,6 +249,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setRestaurant(null);
     setRole(null);
+    // Order ids cached for the rating prompt are account specific. Leaving them
+    // behind made the next person to sign in on this browser inherit them.
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('kheye_now_order_ids');
+        localStorage.removeItem('kheye_now_last_order_id');
+      } catch {
+        // ignore storage errors
+      }
+    }
     showToast('Signed out successfully', 'info');
   }, [showToast]);
 

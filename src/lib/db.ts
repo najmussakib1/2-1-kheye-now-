@@ -2221,12 +2221,37 @@ export function isInWishlistFromDb(userId: number, foodId: number): boolean {
 // ============================================================
 
 /**
- * Get any delivered order that has not been rated yet.
- * Checks by:
- * 1. specific orderId (if provided)
- * 2. userId (if logged in, e.g. customer5 or any user)
- * 3. candidateOrderIds (from local storage)
- * 4. or fallback to most recent delivered unrated order
+ * Check whether an order belongs to the given customer.
+ * Returns false for orders that do not exist, so a caller can treat
+ * "not found" and "not yours" the same way without leaking existence.
+ */
+export function orderBelongsToUser(orderId: number, userId: number): boolean {
+  const db = getDb();
+  try {
+    const row = db.prepare('SELECT 1 AS ok FROM orders WHERE id = ? AND user_id = ?').get(orderId, userId);
+    return !!row;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Get a delivered order belonging to THIS user that has not been rated yet.
+ *
+ * Ownership is enforced in every lookup: an order is only ever returned when
+ * `orders.user_id` matches the authenticated user. The previous version
+ * returned orders with no `user_id` predicate at all when a specific orderId
+ * or a localStorage candidate list was supplied, and fell back to "newest
+ * delivered unrated order in the whole table" for anonymous callers, so one
+ * customer was shown another customer's review prompt.
+ *
+ * Resolution order (all scoped to userId):
+ * 1. the specific orderId, if the caller asked for one
+ * 2. that orderId appearing in the caller's localStorage candidates
+ * 3. the user's oldest pending customer_rating_prompts entry
+ * 4. the user's most recent delivered unrated order
+ *
+ * Returns null when there is no session or nothing is pending.
  */
 export function getPendingRatingOrderForUser(
   userId?: number | null,
@@ -2235,54 +2260,56 @@ export function getPendingRatingOrderForUser(
 ): PendingRatingOrder | null {
   const db = getDb();
   try {
+    // Without an authenticated customer there is no owner to scope to, so
+    // there is nothing we can safely return.
+    if (!userId) return null;
+
+    // "Delivered but not yet rated", qualified by alias because the prompt
+    // lookup joins two tables that both have a `status` column.
+    const unrated = (a: string) =>
+      `${a}.status = 'Delivered' AND (${a}.needs_rating = 1 OR ${a}.is_rated = 0 OR ${a}.is_rated IS NULL)`;
     let orderRow: any = null;
 
     if (orderId) {
       orderRow = db.prepare(`
-        SELECT * FROM orders 
-        WHERE id = ? AND status = 'Delivered' AND (needs_rating = 1 OR is_rated = 0 OR is_rated IS NULL)
-      `).get(orderId);
-    }
-
-    if (!orderRow && userId) {
-      orderRow = db.prepare(`
-        SELECT * FROM orders 
-        WHERE user_id = ? AND status = 'Delivered' AND (needs_rating = 1 OR is_rated = 0 OR is_rated IS NULL)
-        ORDER BY id DESC LIMIT 1
-      `).get(userId);
+        SELECT o.* FROM orders o
+        WHERE o.id = ? AND o.user_id = ? AND ${unrated('o')}
+      `).get(orderId, userId);
     }
 
     if (!orderRow && candidateOrderIds && candidateOrderIds.length > 0) {
       const placeholders = candidateOrderIds.map(() => '?').join(',');
       orderRow = db.prepare(`
-        SELECT * FROM orders 
-        WHERE id IN (${placeholders}) AND status = 'Delivered' AND (needs_rating = 1 OR is_rated = 0 OR is_rated IS NULL)
-        ORDER BY id DESC LIMIT 1
-      `).get(...candidateOrderIds);
+        SELECT o.* FROM orders o
+        WHERE o.id IN (${placeholders}) AND o.user_id = ? AND ${unrated('o')}
+        ORDER BY o.id DESC LIMIT 1
+      `).get(...candidateOrderIds, userId);
     }
 
-    // Check customer_rating_prompts table created by trigger
+    // Check customer_rating_prompts table created by trigger.
+    // Joined to orders so the prompt row and the order owner must agree.
     if (!orderRow) {
-      const prompt = db.prepare(`
-        SELECT order_id FROM customer_rating_prompts 
-        WHERE status = 'pending' ${userId ? 'AND (user_id = ? OR user_id IS NULL)' : ''}
-        ORDER BY id DESC LIMIT 1
-      `).get(...(userId ? [userId] : [])) as any;
-      if (prompt && prompt.order_id) {
-        orderRow = db.prepare('SELECT * FROM orders WHERE id = ?').get(prompt.order_id);
-      }
+      orderRow = db.prepare(`
+        SELECT o.* FROM customer_rating_prompts p
+        JOIN orders o ON o.id = p.order_id
+        WHERE p.status = 'pending' AND p.user_id = ? AND o.user_id = ? AND ${unrated('o')}
+        ORDER BY p.id ASC LIMIT 1
+      `).get(userId, userId);
     }
 
-    // If still not found and no specific user/order requested, check most recent delivered unrated order
-    if (!orderRow && !userId && !orderId && (!candidateOrderIds || candidateOrderIds.length === 0)) {
+    if (!orderRow) {
       orderRow = db.prepare(`
-        SELECT * FROM orders 
-        WHERE status = 'Delivered' AND (needs_rating = 1 OR is_rated = 0 OR is_rated IS NULL)
-        ORDER BY id DESC LIMIT 1
-      `).get();
+        SELECT o.* FROM orders o
+        WHERE o.user_id = ? AND ${unrated('o')}
+        ORDER BY o.id DESC LIMIT 1
+      `).get(userId);
     }
 
     if (!orderRow) return null;
+
+    // Final guard: never hand back an order owned by somebody else, whatever
+    // the branches above matched.
+    if (Number(orderRow.user_id) !== Number(userId)) return null;
 
     // Fetch items with food & restaurant information
     const items = db.prepare(`

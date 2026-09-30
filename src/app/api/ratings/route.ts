@@ -1,29 +1,30 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
-import { getPendingRatingOrderForUser, submitOrderRatingsInDb } from '@/lib/db';
+import { getPendingRatingOrderForUser, submitOrderRatingsInDb, orderBelongsToUser } from '@/lib/db';
 
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const orderIdParam = url.searchParams.get('orderId');
-    const userIdParam = url.searchParams.get('userId') || url.searchParams.get('customer');
     const orderIdsParam = url.searchParams.get('orderIds');
 
-    // 1. Check user authentication session
+    // The review prompt belongs to the signed-in customer, so the session is
+    // the only source of identity. A `userId`/`customer` query parameter is
+    // deliberately ignored: trusting it let any caller request another
+    // customer's pending review.
     const cookieStore = await cookies();
     const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    let authUserId: number | null = null;
+    const session = token ? verifySessionToken(token) : null;
 
-    if (token) {
-      const session = verifySessionToken(token);
-      if (session && session.role === 'user') {
-        authUserId = session.id;
-      }
+    if (!session || session.role !== 'user') {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Please sign in to rate your orders' },
+        { status: 401 }
+      );
     }
 
-    // Effective user ID: auth session or explicit param (supports customer5)
-    const effectiveUserId = authUserId || (userIdParam ? Number(userIdParam) : null);
+    const authUserId = session.id;
     const specificOrderId = orderIdParam ? Number(orderIdParam) : null;
 
     let candidateOrderIds: number[] = [];
@@ -35,7 +36,7 @@ export async function GET(request: Request) {
     }
 
     const pendingOrder = getPendingRatingOrderForUser(
-      effectiveUserId,
+      authUserId,
       specificOrderId,
       candidateOrderIds
     );
@@ -72,16 +73,26 @@ export async function POST(request: Request) {
       );
     }
 
-    // 1. Identify user if logged in
+    // Reviews can only be submitted by the customer who placed the order.
     const cookieStore = await cookies();
     const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
-    let userId: number | null = null;
+    const session = token ? verifySessionToken(token) : null;
 
-    if (token) {
-      const session = verifySessionToken(token);
-      if (session && session.role === 'user') {
-        userId = session.id;
-      }
+    if (!session || session.role !== 'user') {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized: Please sign in to rate your orders' },
+        { status: 401 }
+      );
+    }
+
+    const userId = session.id;
+
+    // Reject before writing: a customer may only review their own order.
+    if (!orderBelongsToUser(Number(orderId), userId)) {
+      return NextResponse.json(
+        { success: false, error: 'Forbidden: This order does not belong to you' },
+        { status: 403 }
+      );
     }
 
     // 2. Validate rating inputs

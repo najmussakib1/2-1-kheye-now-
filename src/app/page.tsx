@@ -38,40 +38,54 @@ export default function HomePage() {
     }
   };
 
-  // Check for any unrated delivered order for the customer
+  // Check for any unrated delivered order belonging to the signed-in customer
   const checkPendingRatings = useCallback(async () => {
+    // Only ever ask for prompts scoped to the current session. The server
+    // ignores any user identity in the query string, and refuses the request
+    // outright when nobody is signed in.
+    if (!user) return;
+
     try {
-      // Gather candidate order IDs from localStorage
+      // Candidate order IDs are only a hint for which order to surface first.
+      // The server re-checks ownership, so ids left in localStorage by a
+      // previous account on this browser cannot expose another customer's order.
       let candidateOrderIds: number[] = [];
       if (typeof window !== 'undefined') {
         try {
-          candidateOrderIds = JSON.parse(localStorage.getItem('kheye_now_order_ids') || '[]');
+          const stored = JSON.parse(localStorage.getItem('kheye_now_order_ids') || '[]');
+          if (Array.isArray(stored)) candidateOrderIds = stored;
         } catch {
           // ignore error
         }
       }
 
-      // Check URL query parameters (e.g. ?customer=5 or ?orderId=...)
-      const searchParams = new URLSearchParams(window.location.search);
-      const urlOrderId = searchParams.get('orderId');
-      const urlCustomer = searchParams.get('customer') || searchParams.get('userId');
-
       const params = new URLSearchParams();
-      if (urlOrderId) params.set('orderId', urlOrderId);
-      if (urlCustomer) params.set('customer', urlCustomer);
       if (candidateOrderIds.length > 0) params.set('orderIds', candidateOrderIds.join(','));
 
       const res = await fetch(`/api/ratings?${params.toString()}`);
+
+      // Signed out (401) or a transient error: make sure no stale prompt from
+      // a previous account stays on screen.
+      if (res.status === 401) {
+        setPendingOrder(null);
+        setIsRatingModalOpen(false);
+        return;
+      }
+      if (!res.ok) return;
+
       const data = await res.json();
 
       if (data.success && data.pendingOrder) {
         setPendingOrder(data.pendingOrder);
         setIsRatingModalOpen(true);
+      } else {
+        setPendingOrder(null);
+        setIsRatingModalOpen(false);
       }
     } catch (err) {
       console.error('Failed to query pending ratings:', err);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     // Initial check on mount
