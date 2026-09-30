@@ -26,10 +26,6 @@ export default function Footer() {
             <p className="text-slate-400 text-sm leading-relaxed max-w-md">
               Kheye Now! is a modern food delivery system to revolutionize the way people enjoy and order food.It enhances our day to day life by easing the worries of fnot only saves time but also provides comfort and convenience in ordering delicious meals from your favorite restaurants.So Order Now and enjoy the food with your loved one.
             </p>
-            <div className="flex items-center gap-2 text-xs font-semibold text-emerald-400 pt-2">
-              <Database className="w-4 h-4" />
-              <span>Database Engine: SQLite (raw SQL commands & schema)</span>
-            </div>
           </div>
 
           {/* Quick Links */}
@@ -69,7 +65,7 @@ export default function Footer() {
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-4">
           <p>© {new Date().getFullYear()} KHEYE NOW! All rights reserved.</p>
           <p className="flex items-center gap-1">
-            <span>Built with Next.js & SQL for CSE Term Project</span>
+            <span>Level 2 Term 2 Project for CSE 216 by NAJMUS SAKIB and ASIR FAYSAL</span>
             <Heart className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
           </p>
         </div>
