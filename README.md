@@ -1,7 +1,6 @@
 <!-- ===================== ANIMATED HEADER ===================== -->
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&customColorList=12,14,18,24&height=240&section=header&text=Kheye%20Now&fontSize=80&fontAlignY=38&animation=fadeIn&desc=A%20Database-Driven%20Food%20%26%20Ride%20Delivery%20Platform&descAlignY=60&descSize=20&fontColor=ffffff" alt="Kheye Now banner" width="100%"/>
 
 <a href="https://git.io/typing-svg">
   <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&duration=3000&pause=800&color=FF6B35&center=true&vCenter=true&width=700&lines=Schema+%E2%80%A2+Queries+%E2%80%A2+Triggers+%E2%80%A2+Functions+%E2%80%A2+Procedures;Top+foods+by+location+%F0%9F%8D%9B;Top+rated+restaurants+%E2%AD%90;Dynamic+rider+assignment+%F0%9F%9B%B5;Auto+review+requests+after+delivery+%F0%9F%93%9D" alt="Typing animation" />
